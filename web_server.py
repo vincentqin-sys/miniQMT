@@ -196,7 +196,18 @@ def _refresh_account_info_worker():
     global _account_info_refreshing
     try:
         position_manager = get_position_manager_instance()
-        account_info = position_manager.get_account_info() or {}
+        # 使用超时保护，避免 get_account_info() 无限阻塞导致刷新标志永久卡死
+        future = api_executor.submit(position_manager.get_account_info)
+        try:
+            account_info = future.result(timeout=5.0) or {}
+        except FuturesTimeoutError:
+            logger.warning("账户信息查询超时（5秒），跳过本次刷新，更新缓存时间戳防止立即重试")
+            with _account_info_lock:
+                if _account_info_cache.get('data') is None:
+                    _account_info_cache['data'] = _build_default_account_info()
+                _account_info_cache['ts'] = time.time()
+            return
+
         if not account_info:
             account_info = _build_default_account_info()
         else:
@@ -1131,9 +1142,9 @@ def init_holdings():
         #     'status': 'success',
         #     'message': '持仓数据初始化成功',
         #     'count': len(positions)
-        # })        
-        
-        result = position_manager.initialize_all_positions_data()
+        # })
+
+        result = get_position_manager_instance().initialize_all_positions_data()
         return jsonify(result)
 
     except Exception as e:

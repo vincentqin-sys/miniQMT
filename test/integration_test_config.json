@@ -94,6 +94,14 @@
       ],
       "priority": "critical"
     },
+    "web_api": {
+      "name": "Web API 功能测试",
+      "description": "使用 Flask 测试客户端验证所有 RESTful API 接口的功能正确性（含 bug 修复回归验证）",
+      "modules": [
+        "test.test_web_api_complete"
+      ],
+      "priority": "critical"
+    },
     "system_integration": {
       "name": "系统集成测试",
       "description": "验证系统整体功能",
@@ -122,7 +130,8 @@
         "test.test_grid_exit_deviation",
         "test.test_grid_validation_params",
         "test.test_trader_callback",
-        "test.test_db_op_safety_verification"
+        "test.test_db_op_safety_verification",
+        "test.test_web_api_complete"
       ],
       "priority": "critical"
     }
