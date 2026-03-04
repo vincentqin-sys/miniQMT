@@ -120,6 +120,16 @@
       ],
       "priority": "critical"
     },
+    "indicator_calculator": {
+      "name": "技术指标计算器测试",
+      "description": "验证 indicator_calculator.py 全部方法的正确性：增量/全量 MA/MACD 计算、EWM 路径依赖一致性、公式数值验证、买卖信号判断、数据库写入幂等性",
+      "modules": [
+        "test.test_indicator_all_methods",
+        "test.test_indicator_incremental_fix",
+        "test.test_indicator_formula_consistency"
+      ],
+      "priority": "high"
+    },
     "fast": {
       "name": "快速验证测试",
       "description": "关键功能快速验证（5分钟内完成）",
@@ -131,7 +141,8 @@
         "test.test_grid_validation_params",
         "test.test_trader_callback",
         "test.test_db_op_safety_verification",
-        "test.test_web_api_complete"
+        "test.test_web_api_complete",
+        "test.test_indicator_all_methods"
       ],
       "priority": "critical"
     }

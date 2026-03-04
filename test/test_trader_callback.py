@@ -155,7 +155,6 @@ class TestTraderCallback(TestBase):
 
     def test_a3_register_trade_callback_appends_to_callback_obj(self):
         """register_trade_callback 应将回调追加到 _callback.trade_callbacks"""
-        from easy_qmt_trader import MyXtQuantTraderCallback
         mock_trader = MagicMock()
         cb_obj = MyXtQuantTraderCallback({})
         mock_trader._callback = cb_obj

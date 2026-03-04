@@ -41,10 +41,13 @@ sys.path.insert(0, PROJECT_ROOT)
 # =====================================================================
 
 # Mock xtquant（迅投QMT行情/交易库）
-for mod_name in [
+_MOCKED_MODULE_NAMES = [
     'xtquant', 'xtquant.xtdata', 'xtquant.xttrader', 'xtquant.xttype',
     'easy_qmt_trader',
-]:
+]
+# 保存已导入的模块原始引用，tearDownModule 时恢复，防止污染其他测试
+_orig_sys_modules = {k: sys.modules[k] for k in _MOCKED_MODULE_NAMES if k in sys.modules}
+for mod_name in _MOCKED_MODULE_NAMES:
     sys.modules[mod_name] = MagicMock()
 
 import pandas as pd
@@ -142,9 +145,10 @@ mock_methods.add_xt_suffix.side_effect = lambda code: code + '.SZ' if not '.' in
 # =====================================================================
 # 第二步：注入 Mock 模块到 sys.modules
 # =====================================================================
-sys.modules['utils'] = mock_utils
-sys.modules['Methods'] = mock_methods
-sys.modules['grid_validation'] = mock_grid_val
+for _extra_mod, _extra_mock in [('utils', mock_utils), ('Methods', mock_methods), ('grid_validation', mock_grid_val)]:
+    if _extra_mod in sys.modules:
+        _orig_sys_modules[_extra_mod] = sys.modules[_extra_mod]
+    sys.modules[_extra_mod] = _extra_mock
 
 # 为真实模块添加 Mock 函数（函数级 patch，避免覆盖整个模块）
 import data_manager as _dm_mod
@@ -1511,6 +1515,23 @@ def print_report():
         }, f, ensure_ascii=False, indent=2)
     print(f"\n  详细报告已保存至: {report_path}")
     print("=" * 80)
+
+
+def tearDownModule():
+    """恢复模块级 Mock 补丁，确保测试隔离（防止污染后续测试模块的 sys.modules）"""
+    all_mocked_names = _MOCKED_MODULE_NAMES + ['utils', 'Methods', 'grid_validation']
+    for mod_name in all_mocked_names:
+        if mod_name in _orig_sys_modules:
+            sys.modules[mod_name] = _orig_sys_modules[mod_name]
+        else:
+            sys.modules.pop(mod_name, None)
+    # 恢复模块函数级补丁
+    _dm_mod.get_data_manager = _orig_get_dm
+    _ic_mod.get_indicator_calculator = _orig_get_ic
+    _pm_mod.get_position_manager = _orig_get_pm
+    _te_mod.get_trading_executor = _orig_get_te
+    _st_mod.get_trading_strategy = _orig_get_st
+    _conf_man_mod.get_config_manager = _orig_get_cm
 
 
 # =====================================================================

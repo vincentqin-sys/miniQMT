@@ -25,69 +25,80 @@ class IndicatorCalculator:
     def calculate_all_indicators(self, stock_code, force_update=False):
         """
         计算所有技术指标
-        
+
         参数:
         stock_code (str): 股票代码
         force_update (bool): 是否强制更新所有数据的指标
-        
+
         返回:
         bool: 是否计算成功
         """
         try:
-            # 获取历史数据
-            df = self.data_manager.get_history_data_from_db(stock_code)
-            if df.empty:
+            # 获取全量历史数据（用于滑动窗口计算上下文）
+            df_full = self.data_manager.get_history_data_from_db(stock_code)
+            if df_full.empty:
                 logger.warning(f"没有 {stock_code} 的历史数据，无法计算指标")
                 return False
-            
-            # 按日期排序
-            df = df.sort_values('date')
-            
+
+            # 按日期排序并重置索引
+            df_full = df_full.sort_values('date').reset_index(drop=True)
+
+            # 确定需要保存指标的新行数量
+            n_new = len(df_full)  # 默认：全量计算（force_update 或首次计算）
+
             # 如果不是强制更新，检查是否有新数据需要计算
             if not force_update:
                 # 获取指标表中的最新日期
                 cursor = self.conn.cursor()
                 cursor.execute(
-                    "SELECT MAX(date) FROM stock_indicators WHERE stock_code=?", 
+                    "SELECT MAX(date) FROM stock_indicators WHERE stock_code=?",
                     (stock_code,)
                 )
                 result = cursor.fetchone()
                 latest_indicator_date = result[0] if result and result[0] else None
-                
+
                 # 如果没有新数据，不需要计算
                 if latest_indicator_date:
-                    latest_df_date = df['date'].max()
+                    latest_df_date = df_full['date'].max()
                     if latest_indicator_date >= latest_df_date:
                         logger.debug(f"{stock_code} 的指标已是最新，不需要更新")
                         return True
-                    
-                    # 只获取新数据部分
-                    df = df[df['date'] > latest_indicator_date]
-                    if df.empty:
+
+                    df_new = df_full[df_full['date'] > latest_indicator_date]
+                    if df_new.empty:
                         logger.debug(f"{stock_code} 没有新的数据需要计算指标")
                         return True
-            
-            # 计算各种指标
+                    n_new = len(df_new)
+
+            # 在全量历史数据上计算指标：
+            #   - MyTT 的 SMA/MACD 均为 EMA 风格（路径依赖），使用完整历史才能保证数值正确
+            #   - 同时保证滑动窗口始终有足够数据，彻底消除"数据长度不足"警告
+            df_calc = df_full
+
+            # 在完整窗口数据上计算指标
             result_df = pd.DataFrame()
-            result_df['stock_code'] = df['stock_code']
-            result_df['date'] = df['date']
-            
+            result_df['stock_code'] = df_calc['stock_code']
+            result_df['date'] = df_calc['date']
+
             # 计算均线指标
             for period in config.MA_PERIODS:
                 ma_col = f'ma{period}'
-                result_df[ma_col] = self._calculate_ma(df, period)
-            
+                result_df[ma_col] = self._calculate_ma(df_calc, period)
+
             # 计算MACD指标
-            macd_df = self._calculate_macd(df)
+            macd_df = self._calculate_macd(df_calc)
             for col in macd_df.columns:
                 result_df[col] = macd_df[col]
-            
+
+            # 只保留新行的计算结果（末尾 n_new 行），避免重复写入已有指标
+            result_df = result_df.tail(n_new).reset_index(drop=True)
+
             # 保存指标结果到数据库
             self._save_indicators(result_df)
-            
+
             logger.info(f"成功计算 {stock_code} 的技术指标，共 {len(result_df)} 条记录")
             return True
-            
+
         except Exception as e:
             logger.error(f"计算 {stock_code} 的技术指标时出错: {str(e)}")
             return False
@@ -193,11 +204,19 @@ class IndicatorCalculator:
         try:
             # 处理NaN值
             df = df.replace({np.nan: None})
-            
+
+            # 先删除已存在的同日期记录，确保幂等（避免 force_update 重复插入）
+            cursor = self.conn.cursor()
+            pairs = list(zip(df['stock_code'], df['date']))
+            cursor.executemany(
+                "DELETE FROM stock_indicators WHERE stock_code=? AND date=?",
+                pairs
+            )
+
             # 保存到数据库
             df.to_sql('stock_indicators', self.conn, if_exists='append', index=False, method='multi')
             self.conn.commit()
-            
+
         except Exception as e:
             logger.error(f"保存指标数据时出错: {str(e)}")
             self.conn.rollback()
