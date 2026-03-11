@@ -163,7 +163,7 @@ class MockTradingExecutor:
         self.position_manager = position_manager
         self._lock = threading.Lock()
 
-    def execute_buy(self, stock_code: str, amount: float, strategy: str) -> dict:
+    def buy_stock(self, stock_code: str, amount: float, strategy: str) -> dict:
         """
         模拟买入执行
         返回格式: dict，与真实TradingExecutor接口兼容（grid_trading_manager调用 result.get('order_id')）
@@ -203,7 +203,7 @@ class MockTradingExecutor:
             'timestamp': trade.timestamp
         }
 
-    def execute_sell(self, stock_code: str, volume: int, strategy: str) -> dict:
+    def sell_stock(self, stock_code: str, volume: int, strategy: str) -> dict:
         """
         模拟卖出执行
         返回格式: dict，与真实TradingExecutor接口兼容（grid_trading_manager调用 result.get('order_id')）

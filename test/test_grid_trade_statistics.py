@@ -20,6 +20,8 @@ from dataclasses import asdict
 import config
 from grid_trading_manager import GridSession, GridTradingManager, PriceTracker
 from grid_database import DatabaseManager
+from trading_executor import TradingExecutor
+from position_manager import PositionManager
 
 
 class TestGridTradeStatistics(unittest.TestCase):
@@ -32,8 +34,8 @@ class TestGridTradeStatistics(unittest.TestCase):
         self.db.init_grid_tables()
 
         # Mock position_manager 和 trading_executor
-        self.position_manager = Mock()
-        self.executor = Mock()
+        self.position_manager = Mock(spec=PositionManager)
+        self.executor = Mock(spec=TradingExecutor)
 
         # 创建管理器
         self.manager = GridTradingManager(

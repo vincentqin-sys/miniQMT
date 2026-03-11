@@ -60,7 +60,7 @@ class MockTradingExecutor:
     def __init__(self):
         self.trade_history = []
 
-    def execute_buy(self, stock_code, amount, strategy):
+    def buy_stock(self, stock_code, amount, strategy):
         trade_id = f"SIM_BUY_{int(datetime.now().timestamp()*1000)}"
         self.trade_history.append({
             'type': 'BUY',
@@ -71,7 +71,7 @@ class MockTradingExecutor:
         logger.info(f"[MOCK] BUY: {stock_code}, amount={amount:.2f}, trade_id={trade_id}")
         return {'success': True, 'order_id': trade_id}
 
-    def execute_sell(self, stock_code, volume, strategy):
+    def sell_stock(self, stock_code, volume, strategy):
         trade_id = f"SIM_SELL_{int(datetime.now().timestamp()*1000)}"
         self.trade_history.append({
             'type': 'SELL',

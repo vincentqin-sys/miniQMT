@@ -152,7 +152,7 @@ class MockTradingExecutor:
         self.qmt_trader = qmt_trader
         self.trades = []
 
-    def execute_buy(self, stock_code, amount, strategy="grid"):
+    def buy_stock(self, stock_code, amount, strategy="grid"):
         """模拟买入"""
         # 使用当前价格(简化处理)
         price = 10.0
@@ -179,7 +179,7 @@ class MockTradingExecutor:
 
         return {'order_id': trade_id, 'volume': volume, 'price': price}
 
-    def execute_sell(self, stock_code, volume, strategy="grid"):
+    def sell_stock(self, stock_code, volume, strategy="grid"):
         """模拟卖出"""
         # 使用当前价格(简化处理)
         price = 10.0

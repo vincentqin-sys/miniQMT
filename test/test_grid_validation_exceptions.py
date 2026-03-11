@@ -19,6 +19,8 @@ from grid_trading_manager import GridTradingManager
 from grid_database import DatabaseManager
 import sqlite3
 import config
+from trading_executor import TradingExecutor
+from position_manager import PositionManager
 
 
 class TestGridValidationExceptions(unittest.TestCase):
@@ -34,8 +36,8 @@ class TestGridValidationExceptions(unittest.TestCase):
         self.db = DatabaseManager(self.test_db)
         self.db.init_grid_tables()
 
-        self.position_mgr = Mock()
-        self.executor = Mock()
+        self.position_mgr = Mock(spec=PositionManager)
+        self.executor = Mock(spec=TradingExecutor)
         self.grid_mgr = GridTradingManager(self.db, self.position_mgr, self.executor)
 
     def tearDown(self):
@@ -232,7 +234,7 @@ class TestGridValidationExceptions(unittest.TestCase):
 
         # 模拟实盘买入失败
         with patch('config.ENABLE_SIMULATION_MODE', False):
-            self.executor.execute_buy.return_value = None  # 返回None表示失败
+            self.executor.buy_stock.return_value = None  # 返回None表示失败
 
             signal = {
                 'stock_code': stock_code,
@@ -273,7 +275,7 @@ class TestGridValidationExceptions(unittest.TestCase):
 
         # 模拟实盘卖出失败
         with patch('config.ENABLE_SIMULATION_MODE', False):
-            self.executor.execute_sell.return_value = None
+            self.executor.sell_stock.return_value = None
 
             signal = {
                 'stock_code': stock_code,

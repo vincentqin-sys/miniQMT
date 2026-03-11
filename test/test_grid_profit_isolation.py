@@ -41,7 +41,7 @@ class MockTradingExecutor:
         self.trade_history = []
         self.order_counter = 0
 
-    def execute_buy(self, stock_code, amount, strategy):
+    def buy_stock(self, stock_code, amount, strategy):
         self.order_counter += 1
         trade_id = f"SIM_BUY_{self.order_counter}"
         self.trade_history.append({
@@ -55,7 +55,7 @@ class MockTradingExecutor:
         logger.info(f"[MOCK] BUY executed: {stock_code}, amount={amount:.2f}, strategy={strategy}")
         return {'success': True, 'order_id': trade_id}
 
-    def execute_sell(self, stock_code, volume, strategy):
+    def sell_stock(self, stock_code, volume, strategy):
         self.order_counter += 1
         trade_id = f"SIM_SELL_{self.order_counter}"
         self.trade_history.append({
@@ -898,7 +898,7 @@ class TestGridProfitIsolation(TestBase):
         # 线程1: 执行止盈卖出
         def execute_profit_sell():
             time.sleep(0.05)
-            result = self.executor.execute_sell(stock_code, 300, strategy='take_profit')
+            result = self.executor.sell_stock(stock_code, 300, strategy='take_profit')
             if result['success']:
                 profit_executed.set()
                 logger.info("[THREAD1] Profit sell executed")
@@ -906,7 +906,7 @@ class TestGridProfitIsolation(TestBase):
         # 线程2: 执行网格买入
         def execute_grid_buy():
             time.sleep(0.05)
-            result = self.executor.execute_buy(stock_code, 1000.0, strategy='grid')
+            result = self.executor.buy_stock(stock_code, 1000.0, strategy='grid')
             if result['success']:
                 grid_executed.set()
                 logger.info("[THREAD2] Grid buy executed")

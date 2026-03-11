@@ -24,6 +24,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import config
 from grid_database import DatabaseManager
 from grid_trading_manager import GridTradingManager, GridSession
+from trading_executor import TradingExecutor
+from position_manager import PositionManager
 
 
 class TestGridSessionRecovery(unittest.TestCase):
@@ -40,8 +42,8 @@ class TestGridSessionRecovery(unittest.TestCase):
         self.db_manager.init_grid_tables()
 
         # Mock依赖对象
-        self.mock_position_manager = Mock()
-        self.mock_executor = Mock()
+        self.mock_position_manager = Mock(spec=PositionManager)
+        self.mock_executor = Mock(spec=TradingExecutor)
 
         # 测试数据
         self.test_stock1 = "000001.SZ"

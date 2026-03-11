@@ -991,8 +991,8 @@ class GridTradingManager:
             logger.info(f"[GRID] _execute_grid_buy: [模拟]网格买入: {stock_code}, 数量={volume}, 价格={trigger_price:.2f}, trade_id={trade_id}")
         else:
             # 实盘买入
-            logger.debug(f"[GRID] _execute_grid_buy: 调用executor.execute_buy 实盘买入")
-            result = self.executor.execute_buy(
+            logger.debug(f"[GRID] _execute_grid_buy: 调用executor.buy_stock 实盘买入")
+            result = self.executor.buy_stock(
                 stock_code=stock_code,
                 amount=actual_amount,
                 strategy=config.GRID_STRATEGY_NAME
@@ -1101,8 +1101,8 @@ class GridTradingManager:
             logger.info(f"[GRID] _execute_grid_sell: [模拟]网格卖出: {stock_code}, 数量={sell_volume}, 价格={trigger_price:.2f}, trade_id={trade_id}")
         else:
             # 实盘卖出
-            logger.debug(f"[GRID] _execute_grid_sell: 调用executor.execute_sell 实盘卖出")
-            result = self.executor.execute_sell(
+            logger.debug(f"[GRID] _execute_grid_sell: 调用executor.sell_stock 实盘卖出")
+            result = self.executor.sell_stock(
                 stock_code=stock_code,
                 volume=sell_volume,
                 strategy=config.GRID_STRATEGY_NAME

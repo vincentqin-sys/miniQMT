@@ -60,7 +60,7 @@ class MockTradingExecutor:
     def __init__(self):
         self.trades = []
 
-    def execute_buy(self, stock_code, amount, strategy):
+    def buy_stock(self, stock_code, amount, strategy):
         """模拟买入"""
         trade = {
             "stock_code": stock_code,
@@ -72,7 +72,7 @@ class MockTradingExecutor:
         self.trades.append(trade)
         return trade
 
-    def execute_sell(self, stock_code, volume, strategy):
+    def sell_stock(self, stock_code, volume, strategy):
         """模拟卖出"""
         trade = {
             "stock_code": stock_code,

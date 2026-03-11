@@ -29,6 +29,7 @@ import config
 from position_manager import PositionManager
 from grid_trading_manager import GridTradingManager
 from grid_database import DatabaseManager
+from trading_executor import TradingExecutor
 
 
 class TestGridSignalDetectionIntegration(unittest.TestCase):
@@ -72,9 +73,9 @@ class TestGridSignalDetectionIntegration(unittest.TestCase):
         self.db_manager = DatabaseManager(self.test_db_path)
 
         # Mock position_manager和trading_executor
-        self.mock_position_manager = Mock()
+        self.mock_position_manager = Mock(spec=PositionManager)
         self.mock_position_manager.get_position.return_value = None
-        self.mock_trading_executor = Mock()
+        self.mock_trading_executor = Mock(spec=TradingExecutor)
 
         # 初始化GridTradingManager（传入3个必需参数）
         self.grid_manager = GridTradingManager(

@@ -176,7 +176,7 @@ class MockTradingExecutor:
         self.trades = []
         self.position_manager = position_manager
 
-    def execute_buy(self, stock_code, amount, strategy):
+    def buy_stock(self, stock_code, amount, strategy):
         """模拟买入"""
         current_price = self.position_manager.current_price
         volume = int(amount / current_price / 100) * 100
@@ -200,7 +200,7 @@ class MockTradingExecutor:
 
         return trade
 
-    def execute_sell(self, stock_code, volume, strategy):
+    def sell_stock(self, stock_code, volume, strategy):
         """模拟卖出"""
         current_price = self.position_manager.current_price
         amount = volume * current_price

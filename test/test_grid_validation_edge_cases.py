@@ -32,10 +32,10 @@ class MockPositionManager:
 
 class MockTradingExecutor:
     """模拟交易执行器"""
-    def execute_buy(self, stock_code, amount, strategy):
+    def buy_stock(self, stock_code, amount, strategy):
         return {'order_id': 'MOCK_BUY_123', 'success': True}
 
-    def execute_sell(self, stock_code, volume, strategy):
+    def sell_stock(self, stock_code, volume, strategy):
         return {'order_id': 'MOCK_SELL_123', 'success': True}
 
 
@@ -342,7 +342,7 @@ class TestGridValidationEdgeCases(unittest.TestCase):
         old_mode = config.ENABLE_SIMULATION_MODE
         try:
             config.ENABLE_SIMULATION_MODE = False
-            with patch.object(self.executor, 'execute_sell', return_value={'order_id': 'TEST'}) as mock_sell:
+            with patch.object(self.executor, 'sell_stock', return_value={'order_id': 'TEST'}) as mock_sell:
                 self.grid_mgr.execute_grid_trade(signal)
                 mock_sell.assert_called_once()
                 call_args = mock_sell.call_args[1]

@@ -23,6 +23,8 @@ from dataclasses import asdict
 import config
 from grid_trading_manager import GridSession, GridTradingManager, PriceTracker
 from grid_database import DatabaseManager
+from trading_executor import TradingExecutor
+from position_manager import PositionManager
 
 
 class TestGridTradeBuy(unittest.TestCase):
@@ -35,8 +37,8 @@ class TestGridTradeBuy(unittest.TestCase):
         self.db.init_grid_tables()
 
         # Mock position_manager 和 trading_executor
-        self.position_manager = Mock()
-        self.executor = Mock()
+        self.position_manager = Mock(spec=PositionManager)
+        self.executor = Mock(spec=TradingExecutor)
 
         # 创建管理器
         self.manager = GridTradingManager(
@@ -263,14 +265,14 @@ class TestGridTradeBuy(unittest.TestCase):
         signal = {'trigger_price': 10.0, 'grid_level': 'lower'}
 
         # Mock executor返回成功
-        self.executor.execute_buy.return_value = {'order_id': 'REAL_BUY_12345'}
+        self.executor.buy_stock.return_value = {'order_id': 'REAL_BUY_12345'}
 
         result = self.manager._execute_grid_buy(session, signal)
 
         # 验证调用executor
         self.assertTrue(result)
-        self.executor.execute_buy.assert_called_once()
-        call_args = self.executor.execute_buy.call_args
+        self.executor.buy_stock.assert_called_once()
+        call_args = self.executor.buy_stock.call_args
         self.assertEqual(call_args[1]['stock_code'], '000001.SZ')
         self.assertAlmostEqual(call_args[1]['amount'], 2000.0, places=2)
         self.assertEqual(call_args[1]['strategy'], config.GRID_STRATEGY_NAME)
@@ -293,7 +295,7 @@ class TestGridTradeBuy(unittest.TestCase):
         signal = {'trigger_price': 10.0, 'grid_level': 'lower'}
 
         # Mock executor返回失败
-        self.executor.execute_buy.return_value = None
+        self.executor.buy_stock.return_value = None
 
         result = self.manager._execute_grid_buy(session, signal)
 
