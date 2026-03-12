@@ -525,3 +525,68 @@ def _to_df(records: List[dict], columns: List[str] = None):
         extra = [c for c in df.columns if c not in columns]
         df = df[existing + extra]
     return df
+
+
+# ---------------------------------------------------------------------------
+# XtDataAdapter — 将 XtQuantClient 包装为 xtquant.xtdata 模块兼容接口
+# ---------------------------------------------------------------------------
+
+class XtDataAdapter:
+    """
+    将 XtQuantClient 包装为与 xtquant.xtdata 相同方法签名的适配器。
+
+    data_manager.py 通过此类访问行情服务，与直接使用 xtquant.xtdata 保持兼容。
+
+    Usage:
+        client = XtQuantClient(config=ClientConfig(...))
+        xtdata = XtDataAdapter(client)
+        xtdata.connect()
+        ticks = xtdata.get_full_tick(['000001.SZ'])
+    """
+
+    def __init__(self, client: "XtQuantClient"):
+        self._client = client
+
+    def connect(self) -> bool:
+        """连接到 XtQuantManager 服务（兼容 xtquant.xtdata.connect()）"""
+        result = self._client.connect()
+        return result is not None
+
+    def get_full_tick(self, stock_codes: list) -> dict:
+        """获取全推行情（兼容 xtquant.xtdata.get_full_tick()）"""
+        return self._client.get_full_tick(stock_codes)
+
+    def get_market_data_ex(
+        self,
+        fields: list,
+        stock_list: list,
+        period: str = "1d",
+        start_time: str = "20200101",
+        end_time: str = "",
+        **kwargs,
+    ) -> dict:
+        """获取历史行情（兼容 xtquant.xtdata.get_market_data_ex()）"""
+        return self._client.get_market_data_ex(
+            fields=fields,
+            stock_list=stock_list,
+            period=period,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+    def download_history_data(
+        self,
+        stock_code: str,
+        period: str = "1d",
+        start_time: str = "20200101",
+        end_time: str = "",
+        incrementally: bool = None,
+    ) -> None:
+        """下载历史数据（兼容 xtquant.xtdata.download_history_data()，忽略返回值）"""
+        self._client.download_history_data(
+            stock_code=stock_code,
+            period=period,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
