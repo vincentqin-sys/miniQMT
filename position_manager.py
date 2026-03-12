@@ -20,6 +20,33 @@ from easy_qmt_trader import easy_qmt_trader
 # 获取logger
 logger = get_logger("position_manager")
 
+
+def _create_qmt_trader():
+    """
+    工厂函数：根据 config.ENABLE_XTQUANT_MANAGER 返回交易接口对象。
+
+    Returns:
+        XtQuantClient: ENABLE_XTQUANT_MANAGER=True 时，返回 HTTP 客户端
+        easy_qmt_trader: ENABLE_XTQUANT_MANAGER=False 时，返回原始接口
+    """
+    if getattr(config, "ENABLE_XTQUANT_MANAGER", False):
+        from xtquant_manager.client import XtQuantClient, ClientConfig
+        account_config = config.get_account_config()
+        return XtQuantClient(
+            config=ClientConfig(
+                base_url=getattr(config, "XTQUANT_MANAGER_URL", "http://127.0.0.1:8888"),
+                account_id=account_config.get("account_id", ""),
+                api_token=getattr(config, "XTQUANT_MANAGER_TOKEN", ""),
+            )
+        )
+    else:
+        account_config = config.get_account_config()
+        return easy_qmt_trader(
+            path=config.QMT_PATH,
+            account=account_config.get("account_id"),
+            account_type=account_config.get("account_type", "STOCK"),
+        )
+
 class PositionManager:
     """持仓管理类，负责跟踪和管理持仓"""
     
@@ -33,13 +60,8 @@ class PositionManager:
         self.monitor_thread = None
         self.stop_flag = False
         
-        # 初始化easy_qmt_trader
-        account_config = config.get_account_config()
-        self.qmt_trader = easy_qmt_trader(
-            path= config.QMT_PATH,
-            account=account_config.get('account_id'),
-            account_type=account_config.get('account_type', 'STOCK')
-        )
+        # 初始化交易接口（根据 ENABLE_XTQUANT_MANAGER 选择本地或 HTTP 客户端）
+        self.qmt_trader = _create_qmt_trader()
 
         # 🔧 修复：检查QMT连接结果
         connect_result = self.qmt_trader.connect()
