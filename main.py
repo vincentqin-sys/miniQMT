@@ -47,6 +47,37 @@ def load_persisted_configs():
         logger.error(f"配置加载失败:{str(e)[:30]}")
         return 0
 
+def _start_xtquant_manager_server():
+    """
+    启动 XtQuantManager HTTP 服务（后台线程）。
+
+    仅在 config.ENABLE_XTQUANT_MANAGER=True 时生效。
+    服务启动后，position_manager 和 data_manager 的工厂函数
+    可通过 HTTP 路由到该服务，实现多账号统一管理。
+
+    Returns:
+        XtQuantServer: 已启动的服务实例；ENABLE_XTQUANT_MANAGER=False 时返回 None。
+    """
+    if not getattr(config, "ENABLE_XTQUANT_MANAGER", False):
+        return None
+
+    try:
+        from xtquant_manager import XtQuantServer, XtQuantServerConfig
+        account_config = config.get_account_config()
+        srv_cfg = XtQuantServerConfig(
+            host="127.0.0.1",
+            port=8888,
+            api_token=getattr(config, "XTQUANT_MANAGER_TOKEN", ""),
+        )
+        server = XtQuantServer(config=srv_cfg)
+        server.start(blocking=False)
+        logger.info("✓ XtQuantManager HTTP 服务已启动 (127.0.0.1:8888)")
+        return server
+    except Exception as e:
+        logger.error(f"XtQuantManager 服务启动失败: {e}")
+        return None
+
+
 def init_system():
     """初始化系统"""
     logger.info("系统初始化")
@@ -58,6 +89,9 @@ def init_system():
 
     # 加载持久化配置（在初始化其他模块之前）
     load_persisted_configs()
+
+    # 按需启动 XtQuantManager HTTP 服务（在各模块初始化之前）
+    _start_xtquant_manager_server()
 
     # 获取各个模块的实例
     data_manager = get_data_manager()
