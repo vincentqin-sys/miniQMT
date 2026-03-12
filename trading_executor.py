@@ -66,7 +66,7 @@ class TradingExecutor:
                 return False
                 
             # 记录初始模拟资金到日志
-            logger.info(f"初始化模拟账户，初始资金: {balance}")
+            logger.info(f"初始化模拟账户，初始资金: {balance:.2f}")
             
             # 设置模拟账户资金
             self.simulation_balance = balance
@@ -246,7 +246,7 @@ class TradingExecutor:
                 logger.info("模拟交易模式，忽略成交回调")
                 return
 
-            logger.info(f"收到成交回调: {deal_info.m_strInstrumentID}, 成交价: {deal_info.m_dPrice}, 成交量: {deal_info.m_nVolume}")
+            logger.info(f"收到成交回调: {deal_info.m_strInstrumentID}, 成交价: {deal_info.m_dPrice:.2f}, 成交量: {deal_info.m_nVolume}")
             
             # 提取成交信息
             stock_code = deal_info.m_strInstrumentID
@@ -334,7 +334,7 @@ class TradingExecutor:
         account_info: 账户资金信息对象
         """
         try:
-            logger.debug(f"收到账户回调: 可用资金: {account_info.m_dAvailable}, 总资产: {account_info.m_dBalance}")
+            logger.debug(f"收到账户回调: 可用资金: {account_info.m_dAvailable:.2f}, 总资产: {account_info.m_dBalance:.2f}")
             
         except Exception as e:
             logger.error(f"处理账户回调时出错: {str(e)}")
@@ -352,7 +352,7 @@ class TradingExecutor:
             cost_price = position_info.m_dOpenPrice
             current_price = position_info.m_dLastPrice
             
-            logger.debug(f"收到持仓回调: {stock_code}, 数量: {volume}, 成本价: {cost_price}, 当前价: {current_price}")
+            logger.debug(f"收到持仓回调: {stock_code}, 数量: {volume}, 成本价: {cost_price:.2f}, 当前价: {current_price:.2f}")
             
             # 更新持仓信息
             if volume > 0:
@@ -393,7 +393,7 @@ class TradingExecutor:
             """, (stock_code, stock_name, trade_time, trade_type, price, volume, amount, trade_id, commission, strategy))
             
             self.conn.commit()
-            logger.info(f"保存交易记录成功: {stock_code}({stock_name}), {trade_type}, 价: {price}, 量: {volume}, 策略: {strategy}")
+            logger.info(f"保存交易记录成功: {stock_code}({stock_name}), {trade_type}, 价: {price:.2f}, 量: {volume}, 策略: {strategy}")
             return True
         
         except Exception as e:
@@ -413,7 +413,7 @@ class TradingExecutor:
         """
         try:
             if self.debug_mode:
-                logger.info(f"更新持仓: stock_code={stock_code}, trade_type={trade_type}, price={price}, volume={volume}")
+                logger.info(f"更新持仓: stock_code={stock_code}, trade_type={trade_type}, price={price:.2f}, volume={volume}")
                 
             # 获取当前持仓
             position = self.position_manager.get_position(stock_code)
@@ -429,11 +429,11 @@ class TradingExecutor:
                     
                     # 更新持仓
                     result = self.position_manager.update_position(stock_code, new_volume, new_cost, price, stock_name=stock_name)
-                    logger.info(f"更新持仓成功: {stock_code}({stock_name}), 新数量: {new_volume}, 新成本: {new_cost}, 结果: {result}")
+                    logger.info(f"更新持仓成功: {stock_code}({stock_name}), 新数量: {new_volume}, 新成本: {new_cost:.2f}, 结果: {result}")
                 else:
                     # 新建持仓
                     result = self.position_manager.update_position(stock_code, volume, price, price, stock_name=stock_name)
-                    logger.info(f"新建持仓成功: {stock_code}({stock_name}), 数量: {volume}, 成本: {price}, 结果: {result}")
+                    logger.info(f"新建持仓成功: {stock_code}({stock_name}), 数量: {volume}, 成本: {price:.2f}, 结果: {result}")
 
             else:  # SELL
                 if position:
@@ -540,7 +540,7 @@ class TradingExecutor:
             # 创建网格交易记录
             grid_id = self.position_manager.add_grid_trade(stock_code, grid_level, buy_price, sell_price, volume)
             
-            logger.info(f"创建 {stock_code} 的网格交易成功，ID: {grid_id}, 买入价: {buy_price}, 卖出价: {sell_price}, 数量: {volume}")
+            logger.info(f"创建 {stock_code} 的网格交易成功，ID: {grid_id}, 买入价: {buy_price:.2f}, 卖出价: {sell_price:.2f}, 数量: {volume}")
             return grid_id
             
         except Exception as e:
@@ -557,7 +557,7 @@ class TradingExecutor:
         try:
             # 如果是模拟交易模式，直接返回模拟账户信息
             if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
-                logger.info(f"返回模拟账户信息，余额: {self.simulation_balance}")
+                logger.info(f"返回模拟账户信息，余额: {self.simulation_balance:.2f}")
                 return {
                     'account_id': self.account_id,
                     'account_type': self.account_type,
@@ -659,7 +659,7 @@ class TradingExecutor:
                     return False, error_msg
                     
                 # 模拟交易模式下总是通过资金检查
-                logger.info(f"模拟交易模式下跳过资金检查: {stock_code}, 数量: {volume}, 价格: {price}")
+                logger.info(f"模拟交易模式下跳过资金检查: {stock_code}, 数量: {volume}, 价格: {price:.2f}")
                 return True, None
             
             # 以下是非模拟模式的原始检查逻辑
@@ -797,7 +797,7 @@ class TradingExecutor:
         """
         with self.trade_lock:
             try:
-                logger.info(f"开始买入处理: {stock_code}, volume={volume}, price={price}, amount={amount}, price_type={price_type}")
+                logger.info(f"开始买入处理: {stock_code}, volume={volume}, price={price:.2f}, amount={amount:.2f}, price_type={price_type}")
         
                 # 检查qmt_trader是否初始化
                 if not hasattr(self.position_manager, 'qmt_trader') or self.position_manager.qmt_trader is None:
@@ -844,18 +844,18 @@ class TradingExecutor:
                             tick = ticks[formatted_stock_code]
                             if hasattr(tick, 'askPrice') and len(tick.askPrice) >= 3:
                                 price = tick.askPrice[2]
-                                logger.info(f"获取到 {formatted_stock_code} 卖三价: {price}")
+                                logger.info(f"获取到 {formatted_stock_code} 卖三价: {price:.2f}")
                             elif hasattr(tick, 'askPrice') and len(tick.askPrice) >= 1:
                                 price = tick.askPrice[0]
-                                logger.info(f"获取到 {formatted_stock_code} 卖一价: {price}")
+                                logger.info(f"获取到 {formatted_stock_code} 卖一价: {price:.2f}")
                             elif isinstance(tick, dict) and 'askPrice' in tick:
                                 ask_prices = tick['askPrice']
                                 if len(ask_prices) >= 3:
                                     price = ask_prices[2]
-                                    logger.info(f"获取到 {formatted_stock_code} 卖三价: {price}")
+                                    logger.info(f"获取到 {formatted_stock_code} 卖三价: {price:.2f}")
                                 elif len(ask_prices) >= 1:
                                     price = ask_prices[0]
-                                    logger.info(f"获取到 {formatted_stock_code} 卖一价: {price}")
+                                    logger.info(f"获取到 {formatted_stock_code} 卖一价: {price:.2f}")
                     except Exception as e:
                         logger.warning(f"获取 {formatted_stock_code} 价格时出错: {str(e)}")
                         
@@ -864,7 +864,7 @@ class TradingExecutor:
                         latest_quote = self.data_manager.get_latest_data(stock_code)
                         if latest_quote:
                             price = latest_quote.get('lastPrice') or 0
-                            logger.info(f"使用 {formatted_stock_code} 最新价: {price}")
+                            logger.info(f"使用 {formatted_stock_code} 最新价: {price:.2f}")
                 
                 # 确保价格有效
                 if price is None or price <= 0:
@@ -898,7 +898,7 @@ class TradingExecutor:
                     
                     if success:
                         sim_order_id = self._generate_sim_order_id()
-                        logger.info(f"[模拟] 买入 {stock_code} 成功，委托号: {sim_order_id}, 价格: {price}, 数量: {volume}")
+                        logger.info(f"[模拟] 买入 {stock_code} 成功，委托号: {sim_order_id}, 价格: {price:.2f}, 数量: {volume}")
                         return sim_order_id
                     else:
                         logger.error(f"[模拟] 买入 {stock_code} 失败")
@@ -1024,7 +1024,7 @@ class TradingExecutor:
         """
         with self.trade_lock:
             try:
-                logger.info(f"开始卖出处理: {stock_code}, volume={volume}, price={price}, ratio={ratio}, price_type={price_type}")
+                logger.info(f"开始卖出处理: {stock_code}, volume={volume}, price={price:.2f}, ratio={ratio:.2f}, price_type={price_type}")
                 
                 # 检查qmt_trader是否初始化
                 if not hasattr(self.position_manager, 'qmt_trader') or self.position_manager.qmt_trader is None:
@@ -1062,10 +1062,10 @@ class TradingExecutor:
                             tick = ticks[formatted_stock_code]
                             if hasattr(tick, 'bidPrice') and len(tick.bidPrice) >= 3:
                                 price = tick.bidPrice[2]
-                                logger.info(f"获取到 {formatted_stock_code} 买三价: {price}")
+                                logger.info(f"获取到 {formatted_stock_code} 买三价: {price:.2f}")
                             elif hasattr(tick, 'bidPrice') and len(tick.bidPrice) >= 1:
                                 price = tick.bidPrice[0]
-                                logger.info(f"获取到 {formatted_stock_code} 买一价: {price}")
+                                logger.info(f"获取到 {formatted_stock_code} 买一价: {price:.2f}")
                             elif isinstance(tick, dict) and 'bidPrice' in tick:
                                 bid_prices = tick['bidPrice']
                                 if len(bid_prices) >= 3:
@@ -1137,7 +1137,7 @@ class TradingExecutor:
                     config.SIMULATION_BALANCE = self.simulation_balance
                     logger.info(f"模拟账户资金更新: +{revenue:.2f}, 余额: {self.simulation_balance:.2f}")
                     
-                    logger.info(f"[模拟] 卖出 {stock_code} 成功，委托号: {sim_order_id}, 价格: {price}, 数量: {volume}")
+                    logger.info(f"[模拟] 卖出 {stock_code} 成功，委托号: {sim_order_id}, 价格: {price:.2f}, 数量: {volume}")
                     return sim_order_id
                 
                 # 实盘交易模式处理
@@ -1214,7 +1214,7 @@ class TradingExecutor:
                                     'amount': price * volume
                                 }
                                 
-                                logger.info(f"卖出 {formatted_stock_code} 下单成功，委托号: {order_id}, 价格: {price}, 数量: {volume}, 价格类型: {price_type}")
+                                logger.info(f"卖出 {formatted_stock_code} 下单成功，委托号: {order_id}, 价格: {price:.2f}, 数量: {volume}, 价格类型: {price_type}")
 
                                 # 🔑 新增：跟踪委托单（用于超时管理，仅卖出信号）
                                 if signal_type and signal_info and not is_simulation:

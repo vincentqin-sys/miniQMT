@@ -707,9 +707,9 @@ class DatabaseManager:
 
                 self.save_grid_template(template)
                 logger.info(f"✅ 初始化模板成功: {template['template_name']}")
-                logger.info(f"   - 档位间隔: {template['price_interval']*100}%")
-                logger.info(f"   - 目标盈利: {template['target_profit']*100}%")
-                logger.info(f"   - 止损比例: {template['stop_loss']*100}%")
+                logger.info(f"   - 档位间隔: {template['price_interval']*100:.2f}%")
+                logger.info(f"   - 目标盈利: {template['target_profit']*100:.2f}%")
+                logger.info(f"   - 止损比例: {template['stop_loss']*100:.2f}%")
                 initialized_count += 1
             except Exception as e:
                 logger.error(f"❌ 初始化模板失败: {template['template_name']}, 错误: {str(e)}")

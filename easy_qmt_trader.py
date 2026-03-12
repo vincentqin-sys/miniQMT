@@ -44,7 +44,7 @@ class MyXtQuantTraderCallback(XtQuantTraderCallback):
         :param asset: XtAsset对象
         :return:
         """
-        logger.info(f"资金变动: 账户={asset.account_id}, 可用资金={asset.cash}, 总资产={asset.total_asset}")
+        logger.info(f"资金变动: 账户={asset.account_id}, 可用资金={asset.cash:.2f}, 总资产={asset.total_asset:.2f}")
     def on_stock_trade(self, trade):
         """
         成交变动推送
@@ -216,10 +216,10 @@ class easy_qmt_trader:
         market_value=account['持仓市值'].tolist()[-1]
         total_asset=account['总资产'].tolist()[-1]
         if cash>=value:
-            logger.info(f'允许买入 股票={stock}, 可用现金={cash}大于买入金额={value}, 价格={price}, 数量={amount}')
+            logger.info(f'允许买入 股票={stock}, 可用现金={cash:.2f}大于买入金额={value:.2f}, 价格={price:.2f}, 数量={amount}')
             return True
         else:
-            logger.warning(f'不允许买入 股票={stock}, 可用现金={cash}小于买入金额={value}, 价格={price}, 数量={amount}')
+            logger.warning(f'不允许买入 股票={stock}, 可用现金={cash:.2f}小于买入金额={value:.2f}, 价格={price:.2f}, 数量={amount}')
             return False
     def check_stock_is_av_sell(self,stock='128036',amount=10):
         '''
@@ -316,7 +316,7 @@ class easy_qmt_trader:
             fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                             order_volume=order_volume, price_type=price_type,
                                                             price=price, strategy_name=strategy_name, order_remark=order_remark)
-            logger.info(f'下单成功 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 订单编号={fix_result_order_id}')
+            logger.info(f'下单成功 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 订单编号={fix_result_order_id}')
             return fix_result_order_id
     def buy(self,security='600031.SH', order_type=xtconstant.STOCK_BUY,
                     amount=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
@@ -338,17 +338,17 @@ class easy_qmt_trader:
                 fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                logger.info(f'买入成功(同步) 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 订单编号={fix_result_order_id}')
+                logger.info(f'买入成功(同步) 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 订单编号={fix_result_order_id}')
                 return fix_result_order_id
             else:
                 # 使用异步接口，返回seq号（需要通过回调映射到order_id）
                 fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                logger.info(f'买入请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 请求序号={fix_result_order_id}')
+                logger.info(f'买入请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 请求序号={fix_result_order_id}')
                 return fix_result_order_id  # 返回API的seq号，回调会建立seq->order_id映射
         else:
-            logger.error(f'买入参数错误 标的={stock_code}, 价格={price}, 委托数量={order_volume}小于0')
+            logger.error(f'买入参数错误 标的={stock_code}, 价格={price:.2f}, 委托数量={order_volume}小于0')
             return None
     def sell(self,security='600031.SH', order_type=xtconstant.STOCK_SELL,
                     amount=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
@@ -370,17 +370,17 @@ class easy_qmt_trader:
                 fix_result_order_id = self.xt_trader.order_stock(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                logger.info(f'卖出成功(同步) 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 订单编号={fix_result_order_id}')
+                logger.info(f'卖出成功(同步) 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 订单编号={fix_result_order_id}')
                 return fix_result_order_id
             else:
                 # 使用异步接口，返回seq号（需要通过回调映射到order_id）
                 fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                                     order_volume=order_volume, price_type=price_type,
                                                                     price=price, strategy_name=strategy_name, order_remark=order_remark)
-                logger.info(f'卖出请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 请求序号={fix_result_order_id}')
+                logger.info(f'卖出请求提交(异步) 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 请求序号={fix_result_order_id}')
                 return fix_result_order_id  # 返回API的seq号，回调会建立seq->order_id映射
         else:
-            logger.error(f'卖出参数错误 标的={stock_code}, 价格={price}, 委托数量={order_volume}小于0')
+            logger.error(f'卖出参数错误 标的={stock_code}, 价格={price:.2f}, 委托数量={order_volume}小于0')
             return None
 
     def order_stock_async(self,stock_code='600031.SH', order_type=xtconstant.STOCK_BUY,
@@ -408,7 +408,7 @@ class easy_qmt_trader:
         fix_result_order_id = self.xt_trader.order_stock_async(account=self.acc,stock_code=stock_code, order_type=order_type,
                                                             order_volume=order_volume, price_type=price_type,
                                                             price=price, strategy_name=strategy_name, order_remark=order_remark)
-        logger.info(f'异步下单请求提交 交易类型={order_type}, 代码={stock_code}, 价格={price}, 数量={order_volume}, 请求序号={fix_result_order_id}')
+        logger.info(f'异步下单请求提交 交易类型={order_type}, 代码={stock_code}, 价格={price:.2f}, 数量={order_volume}, 请求序号={fix_result_order_id}')
         return fix_result_order_id
     def cancel_order_stock(self,order_id=12):
         '''

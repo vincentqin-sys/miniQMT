@@ -101,7 +101,7 @@ class TradingStrategy:
                 add_amount = add_position_info['add_amount']
                 
                 if current_value + add_amount > config.MAX_POSITION_VALUE:
-                    logger.warning(f"{stock_code} 补仓被拒绝: 当前市值{current_value} + 补仓{add_amount} = {current_value + add_amount} > 限制{config.MAX_POSITION_VALUE}")
+                    logger.warning(f"{stock_code} 补仓被拒绝: 当前市值{current_value:.2f} + 补仓{add_amount:.2f} = {current_value + add_amount:.2f} > 限制{config.MAX_POSITION_VALUE:.2f}")
                     return False
                             
             # 冷却期检查
@@ -519,7 +519,7 @@ class TradingStrategy:
                 else:
                     # 新建仓，使用POSITION_UNIT作为首次建仓金额
                     buy_amount = config.POSITION_UNIT
-                    logger.info(f"执行 {stock_code} 首次建仓，金额: {buy_amount}")
+                    logger.info(f"执行 {stock_code} 首次建仓，金额: {buy_amount:.2f}")
                 
                 # 执行买入
                 order_id = self.trading_executor.buy_stock(stock_code, amount=buy_amount, price_type=0)

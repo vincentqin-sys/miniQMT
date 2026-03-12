@@ -463,7 +463,7 @@ class PositionManager:
                                     WHERE stock_code=?
                                 """, (stock_name, open_date, profit_triggered, highest_price, stop_loss_price, profit_breakout_triggered, breakout_highest_price, now, stock_code))
                                 update_count += 1
-                                logger.debug(f"更新SQLite记录: {stock_code}, 最高价:{highest_price}, 止损价:{stop_loss_price}")
+                                logger.debug(f"更新SQLite记录: {stock_code}, 最高价:{highest_price:.2f}, 止损价:{stop_loss_price:.2f}")
                         else:
                             # 插入新记录，使用当前日期作为 open_date
                             current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -836,7 +836,7 @@ class PositionManager:
                 current_price = position_dict.get('current_price', cost_price)
 
                 if highest_price <= 0 or highest_price > cost_price * 20 or highest_price < cost_price * 0.1:
-                    logger.warning(f"{stock_code} 最高价数据异常: {highest_price}，修正为当前价格")
+                    logger.warning(f"{stock_code} 最高价数据异常: {highest_price:.2f}，修正为当前价格")
                     position_dict['highest_price'] = max(cost_price, current_price)
 
                 # 修复：验证止损价 - 区分固定止损和动态止盈
@@ -846,7 +846,7 @@ class PositionManager:
                 if profit_triggered:
                     # 动态止盈场景：止损价应该在最高价的0.75-1.0倍之间（允许15%-25%回撤）
                     if stop_loss_price > highest_price:
-                        logger.warning(f"{stock_code} 动态止盈价数据异常: {stop_loss_price} > 最高价 {highest_price}，重新计算")
+                        logger.warning(f"{stock_code} 动态止盈价数据异常: {stop_loss_price:.2f} > 最高价 {highest_price:.2f}，重新计算")
                         # 重新计算止损价
                         base_cost_price = position_dict.get('base_cost_price')
                         effective_cost = cost_price if cost_price > 0 else (base_cost_price if base_cost_price and base_cost_price > 0 else 0.01)
@@ -861,7 +861,7 @@ class PositionManager:
                     elif stop_loss_price == 0 or stop_loss_price < highest_price * 0.7:
                         # 止损价为0或异常小，重新计算
                         if stop_loss_price > 0:
-                            logger.warning(f"{stock_code} 动态止盈价数据异常: {stop_loss_price} < 最高价*0.7 ({highest_price * 0.7:.2f})，重新计算")
+                            logger.warning(f"{stock_code} 动态止盈价数据异常: {stop_loss_price:.2f} < 最高价*0.7 ({highest_price * 0.7:.2f})，重新计算")
                         # 重新计算止损价
                         base_cost_price = position_dict.get('base_cost_price')
                         effective_cost = cost_price if cost_price > 0 else (base_cost_price if base_cost_price and base_cost_price > 0 else 0.01)
@@ -877,7 +877,7 @@ class PositionManager:
                 else:
                     # 固定止损场景：止损价应该在成本价的0.85-1.0倍之间（0-15%止损）
                     if stop_loss_price > cost_price:
-                        logger.warning(f"{stock_code} 固定止损价数据异常: {stop_loss_price} > 成本价 {cost_price}，重新计算")
+                        logger.warning(f"{stock_code} 固定止损价数据异常: {stop_loss_price:.2f} > 成本价 {cost_price:.2f}，重新计算")
                         recalculated_stop_loss = self.calculate_stop_loss_price(cost_price, highest_price, profit_triggered)
                         position_dict['stop_loss_price'] = recalculated_stop_loss if recalculated_stop_loss else 0.0
                         # 更新内存数据库（P0修复: 添加锁保护）
@@ -888,7 +888,7 @@ class PositionManager:
                             self.memory_conn.commit()
                     elif stop_loss_price == 0 or stop_loss_price < cost_price * 0.85:
                         if stop_loss_price > 0:
-                            logger.warning(f"{stock_code} 固定止损价数据异常: {stop_loss_price} < 成本价*0.85 ({cost_price * 0.85:.2f})，重新计算")
+                            logger.warning(f"{stock_code} 固定止损价数据异常: {stop_loss_price:.2f} < 成本价*0.85 ({cost_price * 0.85:.2f})，重新计算")
                         recalculated_stop_loss = self.calculate_stop_loss_price(cost_price, highest_price, profit_triggered)
                         position_dict['stop_loss_price'] = recalculated_stop_loss if recalculated_stop_loss else 0.0
                         # 更新内存数据库（P0修复: 添加锁保护）
@@ -967,11 +967,11 @@ class PositionManager:
                 if base_cost_price is not None and base_cost_price > 0:
                     # 优先使用base_cost_price(初次建仓成本)
                     final_cost_price = float(base_cost_price)
-                    logger.debug(f"{stock_code} 持仓已清空,使用base_cost_price保留历史成本: {final_cost_price}")
+                    logger.debug(f"{stock_code} 持仓已清空,使用base_cost_price保留历史成本: {final_cost_price:.2f}")
                 elif cost_price is not None and cost_price > 0:
                     # 其次使用QMT返回的cost_price
                     final_cost_price = float(cost_price)
-                    logger.debug(f"{stock_code} 持仓已清空,使用QMT返回的cost_price: {final_cost_price}")
+                    logger.debug(f"{stock_code} 持仓已清空,使用QMT返回的cost_price: {final_cost_price:.2f}")
                 else:
                     # 从数据库获取最后的有效成本价
                     try:
@@ -984,10 +984,10 @@ class PositionManager:
                             db_base_cost = db_row[1]
                             if db_base_cost is not None and db_base_cost > 0:
                                 final_cost_price = float(db_base_cost)
-                                logger.info(f"{stock_code} 持仓已清空,从数据库保留base_cost: {final_cost_price}")
+                                logger.info(f"{stock_code} 持仓已清空,从数据库保留base_cost: {final_cost_price:.2f}")
                             elif db_cost is not None and db_cost > 0:
                                 final_cost_price = float(db_cost)
-                                logger.info(f"{stock_code} 持仓已清空,从数据库保留cost_price: {final_cost_price}")
+                                logger.info(f"{stock_code} 持仓已清空,从数据库保留cost_price: {final_cost_price:.2f}")
                             else:
                                 final_cost_price = 0.0
                                 logger.warning(f"{stock_code} 持仓已清空且无有效成本价,设为0(建议删除此持仓记录)")
@@ -1005,7 +1005,7 @@ class PositionManager:
                 elif base_cost_price is not None and base_cost_price > 0:
                     # QMT成本价无效,使用base_cost_price
                     final_cost_price = float(base_cost_price)
-                    logger.debug(f"{stock_code} QMT成本价无效({cost_price}),使用base_cost_price: {final_cost_price}")
+                    logger.debug(f"{stock_code} QMT成本价无效({cost_price:.2f}),使用base_cost_price: {final_cost_price:.2f}")
                 else:
                     # 最后兜底,设最小值0.01
                     final_cost_price = 0.01
@@ -1092,7 +1092,7 @@ class PositionManager:
 
                     # 如果最高价发生变化，强制重新计算止损价格
                     if old_db_highest_price != final_highest_price:
-                        logger.info(f"{stock_code} 最高价变化：{old_db_highest_price} -> {final_highest_price}，重新计算止损价格")
+                        logger.info(f"{stock_code} 最高价变化：{old_db_highest_price:.2f} -> {final_highest_price:.2f}，重新计算止损价格")
                         calculated_slp = self.calculate_stop_loss_price(final_cost_price, final_highest_price, final_profit_triggered)
                         final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
 
@@ -1121,9 +1121,9 @@ class PositionManager:
                     if final_profit_triggered != existing_profit_triggered:
                         logger.info(f"更新 {stock_code} 持仓: 首次止盈触发: 从 {existing_profit_triggered} 到 {final_profit_triggered}")
                     elif abs(final_highest_price - (old_db_highest_price or 0)) > 0.01:
-                        logger.info(f"更新 {stock_code} 持仓: 最高价: 从 {old_db_highest_price} 到 {final_highest_price}")
+                        logger.info(f"更新 {stock_code} 持仓: 最高价: 从 {old_db_highest_price:.2f} 到 {final_highest_price:.2f}")
                     elif final_stop_loss_price != (float(result_row['stop_loss_price']) if result_row['stop_loss_price'] is not None else None):  # 替代 result[3]
-                        logger.info(f"更新 {stock_code} 持仓: 止损价: 从 {result_row['stop_loss_price']} 到 {final_stop_loss_price}")
+                        logger.info(f"更新 {stock_code} 持仓: 止损价: 从 {result_row['stop_loss_price']:.2f} 到 {final_stop_loss_price:.2f}")
 
                 else:
                     # 新增持仓（保持原有逻辑不变）
@@ -1149,7 +1149,7 @@ class PositionManager:
                     """, (stock_code, stock_name, int(p_volume), final_cost_price, p_base_cost_price, final_current_price, p_market_value,
                         int(p_available), p_profit_ratio, now, open_date, profit_triggered, final_highest_price, final_stop_loss_price))
 
-                    logger.info(f"新增 {stock_code} 持仓: 数量={p_volume}, 成本价={final_cost_price}, 最高价={final_highest_price}, 止损价={final_stop_loss_price}")
+                    logger.info(f"新增 {stock_code} 持仓: 数量={p_volume}, 成本价={final_cost_price:.2f}, 最高价={final_highest_price:.2f}, 止损价={final_stop_loss_price:.2f}")
 
                 # P0修复: commit操作（移除finally块和row_factory恢复）
                 self.memory_conn.commit()
@@ -1432,7 +1432,7 @@ class PositionManager:
 
             # 如果是模拟交易模式，直接返回模拟账户信息（由trading_executor模块管理）
             if hasattr(config, 'ENABLE_SIMULATION_MODE') and config.ENABLE_SIMULATION_MODE:
-                logger.debug(f"返回模拟账户信息，余额: {config.SIMULATION_BALANCE}")
+                logger.debug(f"返回模拟账户信息，余额: {config.SIMULATION_BALANCE:.2f}")
                 # 计算持仓市值
                 positions = self.get_all_positions()
                 market_value = 0
@@ -1505,7 +1505,7 @@ class PositionManager:
         try:
             # 确保输入都是有效的数值
             if cost_price is None or cost_price <= 0:
-                logger.warning(f"成本价无效: {cost_price}, 使用最小止损价")
+                logger.warning(f"成本价无效: {cost_price:.2f}, 使用最小止损价")
                 return 0.0  # 如果成本价无效，返回0作为止损价
                 
             if highest_price is None or highest_price <= 0:
@@ -1794,22 +1794,22 @@ class PositionManager:
 
                 # 🔑 基础数据验证
                 if cost_price <= 0:
-                    logger.error(f"{stock_code} 成本价无效: {cost_price}")
+                    logger.error(f"{stock_code} 成本价无效: {cost_price:.2f}")
                     return None, None
 
                 if current_price <= 0:
-                    logger.warning(f"{stock_code} 当前价格无效: {current_price}，使用成本价")
+                    logger.warning(f"{stock_code} 当前价格无效: {current_price:.2f}，使用成本价")
                     current_price = cost_price
                     
                 # 🔑 关键验证：检查数据是否存在字段错乱
                 if highest_price <= 0:
-                    logger.warning(f"{stock_code} 最高价无效: {highest_price}，使用当前价格")
+                    logger.warning(f"{stock_code} 最高价无效: {highest_price:.2f}，使用当前价格")
                     highest_price = max(cost_price, current_price)
                 elif highest_price > cost_price * 20:  # 最高价超过成本价20倍，明显异常
-                    logger.error(f"{stock_code} 最高价数据异常: {highest_price} > {cost_price} * 20，可能存在字段错乱")
+                    logger.error(f"{stock_code} 最高价数据异常: {highest_price:.2f} > {cost_price:.2f} * 20，可能存在字段错乱")
                     highest_price = max(cost_price, current_price)
                 elif highest_price < cost_price * 0.1:  # 最高价低于成本价10%，明显异常
-                    logger.error(f"{stock_code} 最高价数据异常: {highest_price} < {cost_price} * 0.1，可能存在字段错乱")
+                    logger.error(f"{stock_code} 最高价数据异常: {highest_price:.2f} < {cost_price:.2f} * 0.1，可能存在字段错乱")
                     highest_price = max(cost_price, current_price)
                     
             except (TypeError, ValueError) as e:
@@ -1825,7 +1825,7 @@ class PositionManager:
                     
                     # 如果数据库中的止损价格异常，使用安全计算的值
                     if stop_loss_price <= 0 or stop_loss_price > cost_price * 1.5 or stop_loss_price < cost_price * 0.5:
-                        logger.warning(f"{stock_code} 数据库止损价异常: {stop_loss_price}，使用安全计算值: {safe_stop_loss_price:.2f}")
+                        logger.warning(f"{stock_code} 数据库止损价异常: {stop_loss_price:.2f}，使用安全计算值: {safe_stop_loss_price:.2f}")
                         stop_loss_price = safe_stop_loss_price
                     
                     if current_price <= stop_loss_price:
@@ -1919,7 +1919,7 @@ class PositionManager:
 
                     # 验证动态止盈价格的合理性
                     if dynamic_take_profit_price <= 0 or dynamic_take_profit_price > highest_price * 1.1:
-                        logger.error(f"{stock_code} 动态止盈价格异常: {dynamic_take_profit_price}，跳过检查")
+                        logger.error(f"{stock_code} 动态止盈价格异常: {dynamic_take_profit_price:.2f}，跳过检查")
                         return None, None
 
                     # 如果当前价格跌破动态止盈位，触发止盈
@@ -2017,7 +2017,7 @@ class PositionManager:
                 # 🔑 基础数据验证
                 if current_price <= 0 or cost_price <= 0 or stop_loss_price <= 0:
                     logger.error(f"🚨 {stock_code} 止损信号数据包含无效值，拒绝执行")
-                    logger.error(f"   current_price={current_price}, cost_price={cost_price}, stop_loss_price={stop_loss_price}")
+                    logger.error(f"   current_price={current_price:.2f}, cost_price={cost_price:.2f}, stop_loss_price={stop_loss_price:.2f}")
                     return False
 
                 # 🔑 价格比例检查 - 防止字段错乱导致的异常
@@ -2035,7 +2035,7 @@ class PositionManager:
                 # 🔑 异常值检查
                 if current_price > cost_price * 10 or stop_loss_price > cost_price * 10:
                     logger.error(f"🚨 {stock_code} 价格数据异常，疑似单位错误，拒绝执行")
-                    logger.error(f"   current_price={current_price}, stop_loss_price={stop_loss_price}, cost_price={cost_price}")
+                    logger.error(f"   current_price={current_price:.2f}, stop_loss_price={stop_loss_price:.2f}, cost_price={cost_price:.2f}")
                     return False
 
                 logger.info(f"✅ {stock_code} 止损信号验证通过: 亏损{loss_ratio:.2%}, 止损比例{stop_ratio:.3f}")
@@ -2736,7 +2736,7 @@ class PositionManager:
             
             current_price = float(latest_quote.get('lastPrice', 0))
             if current_price <= 0:
-                logger.debug(f"{stock_code} 最新价格无效: {current_price}")
+                logger.debug(f"{stock_code} 最新价格无效: {current_price:.2f}")
                 return False
             
             # 2. 提取现有持仓数据
@@ -2752,10 +2752,10 @@ class PositionManager:
             effective_cost_price = cost_price
             if cost_price <= 0 and base_cost_price is not None and base_cost_price > 0:
                 effective_cost_price = base_cost_price
-                logger.info(f"[止损修复] {stock_code} cost_price无效({cost_price}),使用base_cost_price: {effective_cost_price}")
+                logger.info(f"[止损修复] {stock_code} cost_price无效({cost_price:.2f}),使用base_cost_price: {effective_cost_price:.2f}")
             elif cost_price <= 0:
                 effective_cost_price = 0.01  # 兜底值
-                logger.warning(f"[止损修复] {stock_code} cost_price和base_cost_price都无效,使用兜底值: {effective_cost_price}")
+                logger.warning(f"[止损修复] {stock_code} cost_price和base_cost_price都无效,使用兜底值: {effective_cost_price:.2f}")
 
             # 3. 计算/更新最高价（重要：基于历史数据重新计算）
             updated_highest_price = self._calculate_highest_price_since_open(stock_code, open_date, current_price)
@@ -3174,7 +3174,7 @@ class PositionManager:
 
                         current_price = float(latest_quote.get('lastPrice', 0))
                         if current_price <= 0:
-                            logger.warning(f"{stock_code} 价格无效: {current_price},跳过本次检查")
+                            logger.warning(f"{stock_code} 价格无效: {current_price:.2f},跳过本次检查")
                             continue
                     except Exception as e:
                         logger.error(f"{stock_code} 获取行情异常: {e}")
