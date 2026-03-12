@@ -16,6 +16,30 @@ from logger import get_logger, suppress_stdout_stderr
 # 获取logger
 logger = get_logger("data_manager")
 
+
+def _create_xtdata():
+    """
+    工厂函数：根据 config.ENABLE_XTQUANT_MANAGER 返回行情接口对象。
+
+    Returns:
+        XtDataAdapter: ENABLE_XTQUANT_MANAGER=True 时，返回 HTTP 适配器
+        xtquant.xtdata module: ENABLE_XTQUANT_MANAGER=False 时，返回原始模块
+    """
+    if getattr(config, "ENABLE_XTQUANT_MANAGER", False):
+        from xtquant_manager.client import XtQuantClient, ClientConfig, XtDataAdapter
+        account_config = config.get_account_config()
+        client = XtQuantClient(
+            config=ClientConfig(
+                base_url=getattr(config, "XTQUANT_MANAGER_URL", "http://127.0.0.1:8888"),
+                account_id=account_config.get("account_id", ""),
+                api_token=getattr(config, "XTQUANT_MANAGER_TOKEN", ""),
+            )
+        )
+        return XtDataAdapter(client)
+    else:
+        import xtquant.xtdata as _xtdata
+        return _xtdata
+
 class DataManager:
     """数据管理类，处理历史行情数据的获取与存储"""
     
@@ -45,23 +69,22 @@ class DataManager:
         self.stop_flag = False
 
     def _init_xtquant(self):
-        """初始化迅投行情接口 - 使用共享连接"""
+        """初始化行情接口（根据 ENABLE_XTQUANT_MANAGER 选择本地或 HTTP 适配器）"""
         try:
-            import xtquant.xtdata as xt
-            self.xt = xt
-            
-            if xt.connect():
-                logger.info("xtquant行情服务连接成功")
+            self.xt = _create_xtdata()
+
+            if self.xt.connect():
+                logger.info("行情服务连接成功")
             else:
-                logger.error("xtquant行情服务连接失败")
+                logger.error("行情服务连接失败")
                 self.xt = None
                 return
-                
+
             # 验证连接状态
             self._verify_connection()
-                
+
         except Exception as e:
-            logger.error(f"初始化迅投行情接口出错: {str(e)}")
+            logger.error(f"初始化行情接口出错: {str(e)}")
             self.xt = None
 
     def _verify_connection(self):
