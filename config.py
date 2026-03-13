@@ -105,7 +105,7 @@ DEFAULT_QMT_PATHS = [
 ]
 
 def get_account_config():
-    """从外部文件读取账号配置"""
+    """从外部文件读取账号配置（返回主账号，向后兼容）"""
     try:
         with open(ACCOUNT_CONFIG_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -115,6 +115,31 @@ def get_account_config():
     except Exception as e:
         print(f"读取账户配置文件失败: {str(e)}")
         return {"account_id": "", "account_type": "STOCK"}
+
+
+def get_all_accounts_config():
+    """
+    返回所有账号配置列表，支持单账号和多账号两种格式。
+
+    格式 1（单账号，向后兼容）：
+        {"account_id": "xxx", "account_type": "STOCK", "qmt_path": "..."}
+        → 返回 [{"account_id": "xxx", ...}]
+
+    格式 2（多账号）：
+        {"account_id": "xxx", ..., "accounts": [{"account_id": "aaa", ...}, ...]}
+        → 返回 accounts 列表
+
+    Returns:
+        list[dict]: 账号配置列表，至少包含一个元素
+    """
+    raw = get_account_config()
+    accounts = raw.get("accounts")
+    if accounts and isinstance(accounts, list):
+        valid = [a for a in accounts if a.get("account_id")]
+        if valid:
+            return valid
+    # 兜底：单账号模式
+    return [raw]
 
 def get_qmt_path():
     """

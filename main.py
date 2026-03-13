@@ -62,8 +62,9 @@ def _start_xtquant_manager_server():
         return None
 
     try:
-        from xtquant_manager import XtQuantServer, XtQuantServerConfig
-        account_config = config.get_account_config()
+        from xtquant_manager import XtQuantServer, XtQuantServerConfig, XtQuantManager
+        from xtquant_manager.account import AccountConfig
+
         srv_cfg = XtQuantServerConfig(
             host="127.0.0.1",
             port=8888,
@@ -72,6 +73,28 @@ def _start_xtquant_manager_server():
         server = XtQuantServer(config=srv_cfg)
         server.start(blocking=False)
         logger.info("✓ XtQuantManager HTTP 服务已启动 (127.0.0.1:8888)")
+
+        # 注册所有账号（支持单账号和多账号两种配置格式）
+        manager = XtQuantManager.get_instance()
+        accounts_list = config.get_all_accounts_config()
+        for acfg in accounts_list:
+            acc_id = acfg.get("account_id", "")
+            if not acc_id:
+                continue
+            try:
+                ok = manager.register_account(AccountConfig(
+                    account_id=acc_id,
+                    qmt_path=acfg.get("qmt_path", config.QMT_PATH),
+                    account_type=acfg.get("account_type", "STOCK"),
+                ))
+                if ok:
+                    logger.info(f"✓ 账号 {acc_id[:4]}*** 注册成功")
+                else:
+                    logger.warning(f"账号 {acc_id[:4]}*** 注册但连接失败，将自动重连")
+            except Exception as e:
+                logger.error(f"注册账号 {acc_id[:4]}*** 失败: {e}")
+
+        logger.info(f"✓ 共注册 {len(accounts_list)} 个账号")
         return server
     except Exception as e:
         logger.error(f"XtQuantManager 服务启动失败: {e}")
