@@ -1,0 +1,458 @@
+"""
+FastAPI 路由定义
+
+所有路由都是对 XtQuantManager 的薄包装，业务逻辑在 manager 层。
+安全层（IP 白名单、速率限制、token 验证）通过中间件和 Depends 实现。
+"""
+from typing import List, Optional
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
+
+from .exceptions import (
+    AccountNotFoundError,
+    XtQuantCallError,
+    XtQuantTimeoutError,
+)
+from .manager import XtQuantManager
+from .models import (
+    AccountStatusResponse,
+    ApiResponse,
+    CancelOrderResponse,
+    DownloadHistoryRequest,
+    HealthResponse,
+    MetricsResponse,
+    OrderRequest,
+    OrderResponse,
+    RegisterAccountRequest,
+)
+from .account import AccountConfig
+from .security import SecurityConfig, verify_api_key
+
+try:
+    from logger import get_logger
+    logger = get_logger("xqm_server")
+except Exception:
+    import logging
+    logger = logging.getLogger("xtquant_manager.server")
+
+
+# ---------------------------------------------------------------------------
+# 应用工厂
+# ---------------------------------------------------------------------------
+
+def create_app(security_config: Optional[SecurityConfig] = None) -> FastAPI:
+    """
+    创建 FastAPI 应用。
+
+    Args:
+        security_config: 安全配置，None 使用默认（本机访问，无 token）
+
+    Returns:
+        FastAPI 应用实例
+    """
+    if security_config is None:
+        security_config = SecurityConfig()
+
+    app = FastAPI(
+        title="XtQuantManager API",
+        description="miniQMT xtquant 接口统一管理层",
+        version="1.0.0",
+    )
+
+    # 注册安全中间件
+    from .security import create_security_middleware
+    app.add_middleware(create_security_middleware(security_config))
+
+    # 将安全配置存入 app.state，供路由访问
+    app.state.security_config = security_config
+
+    # 注册路由
+    _register_routes(app, security_config)
+
+    return app
+
+
+def _make_token_verifier(security_config: SecurityConfig):
+    """创建 token 验证 Depends"""
+    api_key_header = APIKeyHeader(name="X-API-Token", auto_error=False)
+
+    async def verify_token(
+        request: Request,
+        token: Optional[str] = Depends(api_key_header),
+    ) -> str:
+        client_ip = _get_client_ip(request)
+        ok, reason = verify_api_key(
+            token=token or "",
+            expected=security_config.api_token,
+            client_ip=client_ip,
+            local_ips=security_config.local_ips,
+        )
+        if not ok:
+            raise HTTPException(status_code=401, detail=f"认证失败: {reason}")
+        return token or ""
+
+    return verify_token
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _get_manager() -> XtQuantManager:
+    return XtQuantManager.get_instance()
+
+
+def _register_routes(app: FastAPI, security_config: SecurityConfig):
+    """注册所有路由"""
+    verify_token = _make_token_verifier(security_config)
+
+    # ------------------------------------------------------------------
+    # 账号管理
+    # ------------------------------------------------------------------
+
+    @app.post(
+        "/api/v1/accounts",
+        response_model=ApiResponse,
+        status_code=201,
+        tags=["账号管理"],
+    )
+    async def register_account(
+        req: RegisterAccountRequest,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """注册并连接账号"""
+        config = AccountConfig(
+            account_id=req.account_id,
+            qmt_path=req.qmt_path,
+            account_type=req.account_type,
+            session_id=req.session_id,
+            call_timeout=req.call_timeout,
+            reconnect_base_wait=req.reconnect_interval,
+            max_reconnect_attempts=req.max_reconnect_attempts,
+        )
+        connected = manager.register_account(config)
+        return ApiResponse(
+            success=True,
+            data={
+                "account_id": req.account_id,
+                "connected": connected,
+                "message": "注册成功" if connected else "注册成功但连接失败，可稍后重试",
+            },
+        )
+
+    @app.delete(
+        "/api/v1/accounts/{account_id}",
+        response_model=ApiResponse,
+        tags=["账号管理"],
+    )
+    async def unregister_account(
+        account_id: str,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """断开并注销账号"""
+        removed = manager.unregister_account(account_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+        return ApiResponse(success=True, data={"account_id": account_id})
+
+    @app.get(
+        "/api/v1/accounts",
+        response_model=ApiResponse,
+        tags=["账号管理"],
+    )
+    async def list_accounts(
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """列出所有已注册账号"""
+        accounts = manager.list_accounts()
+        return ApiResponse(success=True, data={"accounts": accounts})
+
+    @app.get(
+        "/api/v1/accounts/{account_id}/status",
+        response_model=ApiResponse,
+        tags=["账号管理"],
+    )
+    async def get_account_status(
+        account_id: str,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """获取账号连接状态"""
+        try:
+            state = manager.get_account_state(account_id)
+            return ApiResponse(success=True, data=state)
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    # ------------------------------------------------------------------
+    # 交易操作
+    # ------------------------------------------------------------------
+
+    @app.post(
+        "/api/v1/accounts/{account_id}/orders",
+        response_model=ApiResponse,
+        status_code=201,
+        tags=["交易操作"],
+    )
+    async def create_order(
+        account_id: str,
+        req: OrderRequest,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """下单"""
+        try:
+            order_id = manager.order_stock(
+                account_id=account_id,
+                stock_code=req.stock_code,
+                order_type=req.order_type,
+                order_volume=req.order_volume,
+                price_type=req.price_type,
+                price=req.price,
+                strategy_name=req.strategy_name,
+                order_remark=req.order_remark,
+            )
+            if order_id < 0:
+                return ApiResponse(success=False, error="下单失败，请检查账号状态")
+            return ApiResponse(success=True, data={"order_id": order_id})
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    @app.delete(
+        "/api/v1/accounts/{account_id}/orders/{order_id}",
+        response_model=ApiResponse,
+        tags=["交易操作"],
+    )
+    async def cancel_order(
+        account_id: str,
+        order_id: int,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """撤单"""
+        try:
+            result = manager.cancel_order(account_id, order_id)
+            return ApiResponse(success=True, data={"result": result, "order_id": order_id})
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    @app.get(
+        "/api/v1/accounts/{account_id}/positions",
+        response_model=ApiResponse,
+        tags=["交易操作"],
+    )
+    async def get_positions(
+        account_id: str,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """查询持仓"""
+        try:
+            positions = manager.query_positions(account_id)
+            return ApiResponse(success=True, data={"positions": positions})
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    @app.get(
+        "/api/v1/accounts/{account_id}/asset",
+        response_model=ApiResponse,
+        tags=["交易操作"],
+    )
+    async def get_asset(
+        account_id: str,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """查询账户资产"""
+        try:
+            asset = manager.query_asset(account_id)
+            return ApiResponse(success=True, data=asset)
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    @app.get(
+        "/api/v1/accounts/{account_id}/orders",
+        response_model=ApiResponse,
+        tags=["交易操作"],
+    )
+    async def get_orders(
+        account_id: str,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """查询当日委托"""
+        try:
+            orders = manager.query_orders(account_id)
+            return ApiResponse(success=True, data={"orders": orders})
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    @app.get(
+        "/api/v1/accounts/{account_id}/trades",
+        response_model=ApiResponse,
+        tags=["交易操作"],
+    )
+    async def get_trades(
+        account_id: str,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """查询当日成交"""
+        try:
+            trades = manager.query_trades(account_id)
+            return ApiResponse(success=True, data={"trades": trades})
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    # ------------------------------------------------------------------
+    # 行情操作
+    # ------------------------------------------------------------------
+
+    @app.get(
+        "/api/v1/market/tick",
+        response_model=ApiResponse,
+        tags=["行情操作"],
+    )
+    async def get_tick(
+        stock_codes: str,  # 逗号分隔，如 "000001.SZ,600036.SH"
+        account_id: str,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """获取全推行情"""
+        try:
+            codes = [c.strip() for c in stock_codes.split(",") if c.strip()]
+            tick_data = manager.get_full_tick(account_id, codes)
+            return ApiResponse(success=True, data=tick_data)
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    @app.get(
+        "/api/v1/market/history",
+        response_model=ApiResponse,
+        tags=["行情操作"],
+    )
+    async def get_history(
+        stock_code: str,
+        account_id: str,
+        period: str = "1d",
+        start_time: str = "20200101",
+        end_time: str = "",
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """获取历史行情"""
+        try:
+            data = manager.get_market_data_ex(
+                account_id=account_id,
+                fields=[],
+                stock_list=[stock_code],
+                period=period,
+                start_time=start_time,
+                end_time=end_time,
+            )
+            return ApiResponse(success=True, data=data)
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    @app.post(
+        "/api/v1/market/download",
+        response_model=ApiResponse,
+        tags=["行情操作"],
+    )
+    async def download_history(
+        req: DownloadHistoryRequest,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """下载历史数据到本地"""
+        try:
+            success = manager.download_history_data(
+                account_id=req.account_id,
+                stock_code=req.stock_code,
+                period=req.period,
+                start_time=req.start_time,
+                end_time=req.end_time,
+            )
+            return ApiResponse(success=success)
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {req.account_id}")
+
+    # ------------------------------------------------------------------
+    # 可观测性
+    # ------------------------------------------------------------------
+
+    @app.get(
+        "/api/v1/health",
+        response_model=ApiResponse,
+        tags=["可观测性"],
+    )
+    async def health(
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """获取所有账号健康状态（无需认证，供监控系统使用）"""
+        states = manager.get_all_states()
+        return ApiResponse(
+            success=True,
+            data={
+                "accounts": states,
+                "total": len(states),
+                "healthy": sum(1 for s in states.values() if s.get("connected")),
+            },
+        )
+
+    @app.get(
+        "/api/v1/health/{account_id}",
+        response_model=ApiResponse,
+        tags=["可观测性"],
+    )
+    async def health_account(
+        account_id: str,
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """获取指定账号健康状态"""
+        try:
+            state = manager.get_account_state(account_id)
+            return ApiResponse(success=True, data=state)
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")
+
+    @app.get(
+        "/api/v1/metrics",
+        response_model=ApiResponse,
+        tags=["可观测性"],
+    )
+    async def metrics(
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """获取所有账号调用指标"""
+        all_metrics = manager.get_all_metrics()
+        return ApiResponse(success=True, data=all_metrics)
+
+    @app.get(
+        "/api/v1/metrics/{account_id}",
+        response_model=ApiResponse,
+        tags=["可观测性"],
+    )
+    async def metrics_account(
+        account_id: str,
+        _: str = Depends(verify_token),
+        manager: XtQuantManager = Depends(_get_manager),
+    ):
+        """获取指定账号调用指标"""
+        try:
+            m = manager.get_account_metrics(account_id)
+            return ApiResponse(success=True, data=m)
+        except AccountNotFoundError:
+            raise HTTPException(status_code=404, detail=f"账号不存在: {account_id}")

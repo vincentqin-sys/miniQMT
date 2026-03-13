@@ -1,0 +1,183 @@
+"""
+XtQuantServer — uvicorn 启动/停止封装
+
+支持两种运行模式：
+1. 阻塞模式（blocking=True）：适合独立进程运行
+2. 后台线程模式（blocking=False）：适合嵌入到 miniQMT 的线程架构中
+
+与 miniQMT 的 web_server.py 风格对齐：在独立线程中启动服务。
+"""
+import threading
+import time
+from typing import Optional
+
+from .manager import XtQuantManager
+from .health_monitor import HealthMonitor
+from .security import SecurityConfig
+from .server import create_app
+
+try:
+    from logger import get_logger
+    logger = get_logger("xqm_runner")
+except Exception:
+    import logging
+    logger = logging.getLogger("xtquant_manager.server_runner")
+
+
+class XtQuantServerConfig:
+    """HTTP 服务配置"""
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8888,
+        # 安全配置
+        api_token: str = "",
+        allowed_ips: list = None,
+        rate_limit: int = 60,
+        enable_hmac: bool = False,
+        hmac_secret: str = "",
+        # TLS 配置（局域网场景推荐开启）
+        ssl_certfile: str = "",
+        ssl_keyfile: str = "",
+        # 健康监控配置
+        health_check_interval: float = 30.0,
+        reconnect_cooldown: float = 60.0,
+    ):
+        self.host = host
+        self.port = port
+        self.ssl_certfile = ssl_certfile
+        self.ssl_keyfile = ssl_keyfile
+        self.health_check_interval = health_check_interval
+        self.reconnect_cooldown = reconnect_cooldown
+        self.security = SecurityConfig(
+            api_token=api_token,
+            allowed_ips=allowed_ips or [],
+            rate_limit=rate_limit,
+            enable_hmac=enable_hmac,
+            hmac_secret=hmac_secret,
+        )
+
+    @property
+    def use_tls(self) -> bool:
+        return bool(self.ssl_certfile and self.ssl_keyfile)
+
+
+class XtQuantServer:
+    """
+    XtQuantManager HTTP 服务启动/停止封装。
+
+    Usage:
+        server = XtQuantServer(XtQuantServerConfig(host="0.0.0.0", port=8888))
+        server.start()          # 后台线程启动
+        # ... 运行中 ...
+        server.stop()
+
+    独立进程模式:
+        server = XtQuantServer(XtQuantServerConfig(...))
+        server.start(blocking=True)
+    """
+
+    def __init__(self, config: Optional[XtQuantServerConfig] = None):
+        if config is None:
+            config = XtQuantServerConfig()
+        self.config = config
+
+        self._app = None
+        self._server = None
+        self._server_thread: Optional[threading.Thread] = None
+        self._health_monitor: Optional[HealthMonitor] = None
+        self._running = False
+
+    def start(self, blocking: bool = False) -> None:
+        """
+        启动服务。
+
+        Args:
+            blocking: True=阻塞当前线程（独立进程模式），False=后台线程（嵌入模式）
+        """
+        # 创建 FastAPI 应用
+        self._app = create_app(self.config.security)
+
+        # 启动健康监控
+        manager = XtQuantManager.get_instance()
+        self._health_monitor = HealthMonitor(
+            manager=manager,
+            check_interval=self.config.health_check_interval,
+            reconnect_cooldown=self.config.reconnect_cooldown,
+        )
+        self._health_monitor.start()
+
+        self._running = True
+
+        if blocking:
+            self._run_uvicorn()
+        else:
+            self._server_thread = threading.Thread(
+                target=self._run_uvicorn,
+                name="XtQuantManagerServer",
+                daemon=True,
+            )
+            self._server_thread.start()
+            # 等待服务启动
+            time.sleep(0.5)
+            logger.info(
+                f"XtQuantManager 服务已启动: "
+                f"{'https' if self.config.use_tls else 'http'}://"
+                f"{self.config.host}:{self.config.port}"
+            )
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """优雅停止服务"""
+        self._running = False
+
+        # 停止健康监控
+        if self._health_monitor is not None:
+            self._health_monitor.stop(timeout=timeout)
+            self._health_monitor = None
+
+        # 停止 uvicorn
+        if self._server is not None:
+            self._server.should_exit = True
+
+        if self._server_thread is not None:
+            self._server_thread.join(timeout=timeout)
+            if self._server_thread.is_alive():
+                logger.warning("XtQuantServer 线程未在超时内退出")
+            self._server_thread = None
+
+        logger.info("XtQuantManager 服务已停止")
+
+    def is_running(self) -> bool:
+        return (
+            self._running
+            and self._server_thread is not None
+            and self._server_thread.is_alive()
+        )
+
+    def _run_uvicorn(self) -> None:
+        """在当前线程中运行 uvicorn"""
+        try:
+            import uvicorn
+
+            ssl_kwargs = {}
+            if self.config.use_tls:
+                ssl_kwargs["ssl_certfile"] = self.config.ssl_certfile
+                ssl_kwargs["ssl_keyfile"] = self.config.ssl_keyfile
+
+            uvicorn_config = uvicorn.Config(
+                app=self._app,
+                host=self.config.host,
+                port=self.config.port,
+                log_level="warning",
+                **ssl_kwargs,
+            )
+            self._server = uvicorn.Server(uvicorn_config)
+            self._server.run()
+
+        except ImportError:
+            logger.error("需要安装 uvicorn: pip install uvicorn[standard]")
+        except Exception as e:
+            logger.error(f"uvicorn 运行出错: {e}")
+        finally:
+            self._running = False
