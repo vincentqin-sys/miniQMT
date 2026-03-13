@@ -77,6 +77,14 @@
       ],
       "priority": "high"
     },
+    "grid_bug_regression": {
+      "name": "网格交易Bug回归验证测试",
+      "description": "验证4个已修复的网格交易Bug：P0-1格式化异常(price/ratio为None)、P0-2会话停止后信号残留、P1-1信号重复生成、P1-2执行失败信号残留",
+      "modules": [
+        "test.test_grid_trading_bug_fixes"
+      ],
+      "priority": "high"
+    },
     "core_metrics": {
       "name": "核心指标与利润测试",
       "description": "验证网格利润计算和风险分级等核心指标",
@@ -150,7 +158,8 @@
         "test.test_trader_callback",
         "test.test_db_op_safety_verification",
         "test.test_web_api_complete",
-        "test.test_indicator_all_methods"
+        "test.test_indicator_all_methods",
+        "test.test_grid_trading_bug_fixes"
       ],
       "priority": "critical"
     }

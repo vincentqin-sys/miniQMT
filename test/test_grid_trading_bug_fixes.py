@@ -21,9 +21,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from test.test_base import TestBase
 from test.test_mocks import MockQmtTrader
+from grid_database import DatabaseManager
 from grid_trading_manager import GridTradingManager, GridSession
+from trading_executor import TradingExecutor
 from position_manager import PositionManager
-from config import config
+import config
 
 
 class TestGridTradingBugFixes(TestBase):
@@ -34,13 +36,36 @@ class TestGridTradingBugFixes(TestBase):
         super().setUp()
         self.mock_trader = MockQmtTrader()
 
-        # 创建PositionManager（使用mock trader）
-        with patch('position_manager.EasyQmtTrader', return_value=self.mock_trader):
-            self.position_manager = PositionManager()
-            self.position_manager.qmt_trader = self.mock_trader
+        # 创建PositionManager（与test_trader_callback.py相同方式：
+        # 直接实例化，QMT连接失败→离线模式，不需要patch）
+        self.position_manager = PositionManager()
 
-        # 创建GridTradingManager
-        self.grid_manager = GridTradingManager(self.position_manager)
+        # 为start_grid_session的get_position调用提供默认mock持仓
+        # （各测试用例所用stock_code各不同，用side_effect动态生成）
+        def _mock_get_position(stock_code):
+            return {
+                'stock_code': stock_code,
+                'volume': 1000,
+                'current_price': 10.0,
+                'cost_price': 9.5,
+                'profit_triggered': True,
+                'highest_price': 11.0,
+                'market_value': 10000
+            }
+        self.position_manager.get_position = _mock_get_position
+
+        # 创建临时数据库供GridTradingManager使用
+        self.test_db_path = f"data/test_bugfix_{int(time.time()*1000)}.db"
+        self.db_manager = DatabaseManager(db_path=self.test_db_path)
+        self.db_manager.init_grid_tables()
+        self.mock_executor = Mock(spec=TradingExecutor)
+
+        # 创建GridTradingManager（传入正确的3个参数）
+        self.grid_manager = GridTradingManager(
+            db_manager=self.db_manager,
+            position_manager=self.position_manager,
+            trading_executor=self.mock_executor
+        )
 
     def tearDown(self):
         """测试后清理"""
@@ -50,8 +75,17 @@ class TestGridTradingBugFixes(TestBase):
                 try:
                     session = self.grid_manager.sessions[stock_code]
                     self.grid_manager.stop_grid_session(session.id, "test_cleanup")
-                except:
+                except Exception:
                     pass
+        if hasattr(self, 'position_manager'):
+            try:
+                self.position_manager.stop_sync_thread()
+            except Exception:
+                pass
+        if hasattr(self, 'db_manager') and self.db_manager:
+            self.db_manager.close()
+        if hasattr(self, 'test_db_path') and os.path.exists(self.test_db_path):
+            os.remove(self.test_db_path)
         super().tearDown()
 
     # ==================== P0-1: 格式化字符串bug验证 ====================
@@ -63,9 +97,8 @@ class TestGridTradingBugFixes(TestBase):
         场景：卖出时price参数为None（获取价格失败）
         预期：日志正常输出，不抛出异常
         """
-        from trading_executor import TradingExecutor
-
-        executor = TradingExecutor(self.position_manager)
+        executor = TradingExecutor()
+        executor.position_manager = self.position_manager  # 替换为测试用PM
 
         # 模拟环境
         with patch.object(config, 'ENABLE_SIMULATION_MODE', True):
@@ -100,9 +133,8 @@ class TestGridTradingBugFixes(TestBase):
         场景：卖出时ratio参数为None（使用volume参数）
         预期：日志正常输出，交易正常执行
         """
-        from trading_executor import TradingExecutor
-
-        executor = TradingExecutor(self.position_manager)
+        executor = TradingExecutor()
+        executor.position_manager = self.position_manager  # 替换为测试用PM
 
         with patch.object(config, 'ENABLE_SIMULATION_MODE', True):
             with patch.object(config, 'is_trade_time', return_value=True):
@@ -345,27 +377,22 @@ class TestGridTradingBugFixes(TestBase):
                 'timestamp': datetime.now()
             }
 
-        # 模拟策略执行（会话不存在，应失败）
-        from strategy import Strategy
-        strategy = Strategy(self.position_manager, None, None)
-
-        # 执行网格交易（应失败）
+        # 执行网格交易（会话不存在，应失败）
         success = self.grid_manager.execute_grid_trade(signal_info)
         self.assertFalse(success, "会话不存在时，执行应失败")
 
         # P1-2验证：失败后清除信号
-        # 注意：这需要在strategy.py中调用mark_signal_processed
-        # 这里直接验证strategy的处理逻辑
-        with patch.object(self.grid_manager, 'execute_grid_trade', return_value=False):
-            # 模拟策略线程执行
-            with self.position_manager.signal_lock:
-                if stock_code in self.position_manager.latest_signals:
-                    # 策略应在失败后调用此方法
-                    self.position_manager.mark_signal_processed(stock_code)
+        # 注意：mark_signal_processed 内部自己获取 signal_lock，
+        # 不能在持有 lock 的 with 块内调用它（否则 threading.Lock 会死锁）
+        self.assertIn(stock_code, self.position_manager.latest_signals,
+                      "执行失败后信号应仍在队列（尚未清除）")
 
-            # 验证信号已清除
-            self.assertNotIn(stock_code, self.position_manager.latest_signals,
-                           "P1-2修复验证：执行失败后，信号应被清除")
+        # 模拟策略在失败后调用 mark_signal_processed 清除信号
+        self.position_manager.mark_signal_processed(stock_code)
+
+        # 验证信号已清除
+        self.assertNotIn(stock_code, self.position_manager.latest_signals,
+                       "P1-2修复验证：执行失败后，信号应被清除")
 
     def test_P1_2_signal_cleared_on_execution_exception(self):
         """

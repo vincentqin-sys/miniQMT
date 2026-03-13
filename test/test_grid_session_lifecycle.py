@@ -46,10 +46,13 @@ class TestGridSessionLifecycle(unittest.TestCase):
         self.db_manager.init_grid_tables()
 
         # Mock依赖对象
-        # 注意：不使用spec=PositionManager，因为signal_lock是实例属性，不是类属性
-        self.mock_position_manager = Mock()
-        self.mock_position_manager.signal_lock = MagicMock()  # 添加signal_lock属性
-        self.mock_position_manager.latest_signals = {}  # 添加latest_signals属性
+        # 使用spec=PositionManager保持接口约束（防止调用不存在的方法）
+        # signal_lock/latest_signals是__init__中动态赋值的实例属性，不在class spec中，
+        # 需要显式设置——Mock(spec=X)只阻止"读取"未知属性，不阻止"写入"，
+        # 一旦显式赋值后读取会直接返回赋值结果，绕过spec检查。
+        self.mock_position_manager = Mock(spec=PositionManager)
+        self.mock_position_manager.signal_lock = MagicMock()  # 实例属性，显式添加
+        self.mock_position_manager.latest_signals = {}        # 实例属性，显式添加
         self.mock_executor = Mock(spec=TradingExecutor)
 
         # 创建GridTradingManager实例
