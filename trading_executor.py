@@ -1024,7 +1024,10 @@ class TradingExecutor:
         """
         with self.trade_lock:
             try:
-                logger.info(f"开始卖出处理: {stock_code}, volume={volume}, price={price:.2f}, ratio={ratio:.2f}, price_type={price_type}")
+                # 修复：处理price或ratio为None的情况，避免格式化异常
+                price_str = f"{price:.2f}" if price is not None else "None"
+                ratio_str = f"{ratio:.2f}" if ratio is not None else "None"
+                logger.info(f"开始卖出处理: {stock_code}, volume={volume}, price={price_str}, ratio={ratio_str}, price_type={price_type}")
                 
                 # 检查qmt_trader是否初始化
                 if not hasattr(self.position_manager, 'qmt_trader') or self.position_manager.qmt_trader is None:

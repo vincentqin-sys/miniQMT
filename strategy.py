@@ -797,9 +797,13 @@ class TradingStrategy:
                                 logger.info(f"[GRID-STRATEGY] {stock_code} 网格交易执行成功: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}")
                                 return
                             else:
-                                logger.error(f"[GRID-STRATEGY] {stock_code} 网格交易执行失败: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}")
+                                # ⭐ P1-2修复：执行失败也清除信号，避免无限重试
+                                logger.error(f"[GRID-STRATEGY] {stock_code} 网格交易执行失败: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}, 清除信号")
+                                self.position_manager.mark_signal_processed(stock_code)
                         except Exception as e:
-                            logger.error(f"[GRID-STRATEGY] {stock_code} 网格交易执行异常: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}, 错误={str(e)}")
+                            # ⭐ P1-2修复：执行异常也清除信号
+                            logger.error(f"[GRID-STRATEGY] {stock_code} 网格交易执行异常: signal_type={signal_type}, session_id={signal_info.get('session_id', 'N/A')}, 错误={str(e)}, 清除信号")
+                            self.position_manager.mark_signal_processed(stock_code)
 
             # 5. 检查技术指标买入信号
             buy_signal = self.indicator_calculator.check_buy_signal(stock_code)

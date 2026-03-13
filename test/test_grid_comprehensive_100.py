@@ -33,6 +33,8 @@ class MockPositionManager:
     def __init__(self):
         self.positions = {}
         self.account_info = {
+        self.signal_lock = __import__('threading').RLock()  # signal_lock
+        self.latest_signals = dict()  # latest_signals
             'available_cash': 100000.0,
             'total_asset': 150000.0
         }

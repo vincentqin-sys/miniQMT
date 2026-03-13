@@ -89,6 +89,8 @@ class MockPositionManager:
     def __init__(self, qmt_trader):
         self.qmt_trader = qmt_trader
         self.current_prices = {}
+        self.signal_lock = __import__('threading').RLock()  # signal_lock
+        self.latest_signals = dict()  # latest_signals
 
     def update_current_price(self, stock_code, price):
         self.current_prices[stock_code] = price

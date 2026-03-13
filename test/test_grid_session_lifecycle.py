@@ -46,7 +46,10 @@ class TestGridSessionLifecycle(unittest.TestCase):
         self.db_manager.init_grid_tables()
 
         # Mock依赖对象
-        self.mock_position_manager = Mock(spec=PositionManager)
+        # 注意：不使用spec=PositionManager，因为signal_lock是实例属性，不是类属性
+        self.mock_position_manager = Mock()
+        self.mock_position_manager.signal_lock = MagicMock()  # 添加signal_lock属性
+        self.mock_position_manager.latest_signals = {}  # 添加latest_signals属性
         self.mock_executor = Mock(spec=TradingExecutor)
 
         # 创建GridTradingManager实例

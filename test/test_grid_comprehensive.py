@@ -33,6 +33,10 @@ class MockPositionManager:
     """模拟持仓管理器"""
     def __init__(self):
         self.positions = {
+        self.signal_lock = __import__('threading').RLock()  # 添加signal_lock属性
+        self.latest_signals = dict()  # 添加latest_signals属性
+        self.signal_lock = __import__('threading').RLock()  # signal_lock
+        self.latest_signals = dict()  # latest_signals
             '000001.SZ': {
                 'stock_code': '000001.SZ',
                 'stock_name': '测试股票',

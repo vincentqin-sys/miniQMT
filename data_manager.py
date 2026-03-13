@@ -299,13 +299,28 @@ class DataManager:
             if stock_code.endswith((".SH", ".SZ")):
                 stock_code = stock_code[:-3]  # Remove suffix
 
-            # Call getStockData
-            df = Methods.getStockData(
-                code=stock_code,
-                offset = 60,
-                freq=freq,
-                adjustflag='qfq'  # 前复权
-            )
+            # ⭐ 超时优化：为Mootdx调用添加超时保护
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    Methods.getStockData,
+                    code=stock_code,
+                    offset=60,
+                    freq=freq,
+                    adjustflag='qfq'  # 前复权
+                )
+                try:
+                    df = future.result(timeout=10.0)  # 10秒超时（历史数据可以稍长）
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"Mootdx: 下载 {stock_code} 历史数据超时（10秒）")
+                    return None
+                except RuntimeError as e:
+                    # 捕获"cannot schedule new futures after interpreter shutdown"错误
+                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                        logger.debug(f"[DATA] 解释器正在关闭，跳过下载 {stock_code} 历史数据")
+                        return None
+                    raise
 
             if df is None or df.empty:
                 logger.warning(f"使用Mootdx获取 {stock_code} 的历史数据为空")
@@ -336,6 +351,12 @@ class DataManager:
             return df
 
         except Exception as e:
+            # 区分正常关闭错误和真正的错误
+            error_str = str(e).lower()
+            if "interpreter shutdown" in error_str or "cannot schedule" in error_str:
+                logger.debug(f"[DATA] 系统正在关闭，跳过下载 {stock_code} 历史数据")
+                return None
+
             # 检查是否是长度不匹配错误
             if "Length mismatch" in str(e):
                 logger.warning(f"下载 {stock_code} 数据时发生长度不匹配错误，使用默认数据")
@@ -381,29 +402,56 @@ class DataManager:
             end_date = datetime.now().strftime('%Y%m%d')
         
         logger.info(f"下载 {stock_code} 的历史数据, 周期: {period}, 从 {start_date} 到 {end_date}")
-        
+
         try:
+            # ⭐ 超时优化：为xtquant API调用添加超时保护
+            import concurrent.futures
+
             # 首先使用XtQuant API下载数据到本地
-            self.xt.download_history_data(
-                stock_code,
-                period=period,
-                start_time=start_date,
-                end_time=end_date,
-                incrementally=True  # 使用增量下载
-            )
-            
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    self.xt.download_history_data,
+                    stock_code,
+                    period=period,
+                    start_time=start_date,
+                    end_time=end_date,
+                    incrementally=True  # 使用增量下载
+                )
+                try:
+                    future.result(timeout=15.0)  # 15秒超时
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"xtquant: 下载 {stock_code} 历史数据超时（15秒）")
+                    return None
+                except RuntimeError as e:
+                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                        logger.debug(f"[DATA] 解释器正在关闭，跳过下载 {stock_code} 历史数据")
+                        return None
+                    raise
+
             # 等待数据下载完成
             time.sleep(0.5)
-            
+
             # 使用get_market_data_ex从本地获取下载的数据
             # 注意第一个参数是字段列表，可以为空
-            result = self.xt.get_market_data_ex(
-                [],  # 空字段列表表示获取所有可用字段
-                [stock_code],
-                period=period,
-                start_time=start_date,
-                end_time=end_date
-            )
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    self.xt.get_market_data_ex,
+                    [],  # 空字段列表表示获取所有可用字段
+                    [stock_code],
+                    period=period,
+                    start_time=start_date,
+                    end_time=end_date
+                )
+                try:
+                    result = future.result(timeout=10.0)  # 10秒超时
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"xtquant: 获取 {stock_code} 历史数据超时（10秒）")
+                    return None
+                except RuntimeError as e:
+                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                        logger.debug(f"[DATA] 解释器正在关闭，跳过获取 {stock_code} 历史数据")
+                        return None
+                    raise
             
             if not result:
                 logger.warning(f"获取 {stock_code} 的历史数据为空")
@@ -442,6 +490,11 @@ class DataManager:
                 return None
             
         except Exception as e:
+            # 区分正常关闭错误和真正的错误
+            error_str = str(e).lower()
+            if "interpreter shutdown" in error_str or "cannot schedule" in error_str:
+                logger.debug(f"[DATA] 系统正在关闭，跳过下载 {stock_code} 历史数据")
+                return None
             logger.error(f"下载 {stock_code} 的历史数据时出错: {str(e)}")
             return None
         

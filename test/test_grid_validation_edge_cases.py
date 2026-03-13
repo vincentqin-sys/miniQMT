@@ -22,6 +22,8 @@ class MockPositionManager:
     """模拟持仓管理器"""
     def __init__(self):
         self.positions = {}
+        self.signal_lock = __import__('threading').RLock()  # signal_lock
+        self.latest_signals = dict()  # latest_signals
 
     def get_position(self, stock_code):
         return self.positions.get(stock_code)

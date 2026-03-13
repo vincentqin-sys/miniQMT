@@ -99,6 +99,8 @@ class MockPositionManager:
         self._positions: Dict[str, MockPosition] = {}
         self.data_version = 0
         self._lock = threading.RLock()
+        self.signal_lock = threading.RLock()  # 添加signal_lock属性
+        self.latest_signals = {}  # 添加latest_signals属性
 
     def add_position(self, stock_code: str, volume: int = 1000,
                      cost_price: float = 9.50, current_price: float = 10.00,

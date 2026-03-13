@@ -625,6 +625,15 @@ class GridTradingManager:
         # 触发数据版本更新
         self.position_manager._increment_data_version()
 
+        # ⭐ P0-2修复：清除该股票的网格信号，避免会话停止后信号仍在执行
+        with self.position_manager.signal_lock:
+            if stock_code in self.position_manager.latest_signals:
+                signal_info = self.position_manager.latest_signals[stock_code]
+                signal_type = signal_info.get('type', '')
+                if signal_type.startswith('grid_'):
+                    logger.info(f"[GRID] 会话停止，清除 {stock_code} 的网格信号: {signal_type}")
+                    del self.position_manager.latest_signals[stock_code]
+
         final_stats = {
             'stock_code': stock_code,
             'trade_count': session.trade_count,
@@ -803,6 +812,13 @@ class GridTradingManager:
             # 4. 检查回调触发
             signal_type = tracker.check_callback(session.callback_ratio)
             if signal_type:
+                # ⭐ P1-1修复：信号去重机制 - 检查是否已有相同类型的信号
+                with self.position_manager.signal_lock:
+                    existing = self.position_manager.latest_signals.get(stock_code)
+                    if existing and existing.get('type') == f'grid_{signal_type.lower()}':
+                        logger.debug(f"[GRID] check_grid_signals: {stock_code} 已有 {signal_type} 信号，跳过重复生成")
+                        return None
+
                 logger.info(f"[GRID] check_grid_signals: {stock_code} 检测到信号 signal_type={signal_type}")
                 return self._create_grid_signal(session, tracker, signal_type, current_price)
 

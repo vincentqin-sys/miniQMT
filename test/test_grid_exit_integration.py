@@ -30,6 +30,7 @@
 import unittest
 import sys
 import os
+import threading  # 添加threading导入
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 from dataclasses import asdict
@@ -98,6 +99,8 @@ class MockPositionManager:
     def __init__(self, qmt_trader):
         self.qmt_trader = qmt_trader
         self.current_prices = {}
+        self.signal_lock = threading.RLock()  # 添加signal_lock属性
+        self.latest_signals = {}  # 添加latest_signals属性
 
     def update_current_price(self, stock_code, price):
         self.current_prices[stock_code] = price
