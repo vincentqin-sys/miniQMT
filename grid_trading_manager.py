@@ -920,10 +920,23 @@ class GridTradingManager:
                     logger.warning(f"[GRID] execute_grid_trade: 交易执行失败 stock_code={stock_code}, signal_type={signal_type}")
                     return False
 
-                # 设置档位冷却
-                level = signal['grid_level']
-                self.level_cooldowns[(session.id, level)] = time.time()
-                logger.debug(f"[GRID] execute_grid_trade: 设置档位冷却 session_id={session.id}, level={level:.2f}")
+                # ⚠️ BUG修复: 使用相对于初始中心价的固定档位进行冷却
+                # 问题: 动态中心价导致档位变化，冷却key失效，# 解决: 填基于初始中心价计算固定档位价格
+                initial_upper_level = session.center_price * (1 + session.price_interval)
+                initial_lower_level = session.center_price * (1 - session.price_interval)
+
+
+                # 根据信号类型选择冷却档位
+                if signal_type == 'SELL':
+                    cooldown_level = initial_upper_level
+                else:  # BUY
+                    cooldown_level = initial_lower_level
+
+                cooldown_key = (session.id, cooldown_level)
+                self.level_cooldowns[cooldown_key] = time.time()
+                logger.debug(f"[GRID] execute_grid_trade: 设置档位冷却 session_id={session.id}, "
+                            f"level={cooldown_level:.2f} (基于初始中心价{session.center_price:.2f}), "
+                            f"signal_type={signal_type}")
 
                 # 执行交易后的状态
                 logger.debug(f"[GRID] execute_grid_trade: 交易后状态 trade_count={session.trade_count}, "

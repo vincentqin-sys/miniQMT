@@ -688,6 +688,16 @@ class DataManager:
         stock_code = self._adjust_stock(stock_code)
 
         try:
+            # ⚠️ 检测Python解释器是否正在关闭
+            import sys
+            if not hasattr(sys, 'flags') or not sys.is_finalizing:
+                # 正常运行状态
+                pass
+            else:
+                # 解释器正在关闭，直接返回
+                logger.debug(f"[DATA] 检测到解释器正在关闭，跳过获取 {stock_code} 行情")
+                return {}
+
             # ⭐ 超时优化：添加超时保护
             import concurrent.futures
 
@@ -698,6 +708,12 @@ class DataManager:
                 except concurrent.futures.TimeoutError:
                     logger.warning(f"xtdata: 获取 {stock_code} 行情超时（3秒）")
                     return {}  # 返回空字典，与原逻辑一致
+                except RuntimeError as e:
+                    # 捕获"cannot schedule new futures after interpreter shutdown"错误
+                    if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
+                        logger.debug(f"[DATA] 解释器正在关闭，跳过获取 {stock_code} 行情")
+                        return {}
+                    raise
 
             if not latest_quote or stock_code not in latest_quote:
                 logger.warning(f"xtdata:未获取到 {stock_code} 的tick行情，返回值: {latest_quote}")
@@ -709,9 +725,14 @@ class DataManager:
             return quote_data
 
         except Exception as e:
+            # 区分正常关闭错误和真正的错误
+            error_str = str(e).lower()
+            if "interpreter shutdown" in error_str or "cannot schedule" in error_str:
+                logger.debug(f"[DATA] 系统正在关闭，跳过获取 {stock_code} 行情")
+                return {}
             logger.error(f"xtdata: 获取 {stock_code} 的最新行情时出错: {str(e)}", exc_info=True)
             return {}  # 返回空字典而不是None
-    
+
     def get_history_data_from_db(self, stock_code, start_date=None, end_date=None):
         """
         从数据库获取历史数据

@@ -197,7 +197,21 @@ def _refresh_account_info_worker():
     try:
         position_manager = get_position_manager_instance()
         # 使用超时保护，避免 get_account_info() 无限阻塞导致刷新标志永久卡死
-        future = api_executor.submit(position_manager.get_account_info)
+
+        # ⚠️ 检查executor是否已关闭
+        if not api_executor or api_executor._shutdown:
+            logger.debug("[账户刷新] API线程池已关闭，跳过刷新")
+            return
+
+        try:
+            future = api_executor.submit(position_manager.get_account_info)
+        except RuntimeError as e:
+            # 捕获"cannot schedule new futures after shutdown"错误
+            if "shutdown" in str(e).lower():
+                logger.debug(f"[账户刷新] 线程池已关闭，跳过刷新: {str(e)}")
+                return
+            raise
+
         try:
             account_info = future.result(timeout=5.0) or {}
         except FuturesTimeoutError:
@@ -1481,8 +1495,18 @@ def push_realtime_data():
                 # 更新所有持仓的最新价格
                 position_manager.update_all_positions_price()
 
+                # ⚠️ 检查停止标志，如果已设置则立即退出
+                if stop_push_flag:
+                    logger.info("[推送线程] 检测到停止标志，退出循环")
+                    break
+
                 # 获取所有持仓数据
                 positions_all_df = position_manager.get_all_positions_with_all_fields()
+
+                # ⚠️ 再次检查停止标志
+                if stop_push_flag:
+                    logger.info("[推送线程] 检测到停止标志，退出循环")
+                    break
 
                 # 处理NaN值
                 positions_all_df = positions_all_df.replace({pd.NA: None, float('nan'): None})
@@ -1505,11 +1529,19 @@ def push_realtime_data():
                 # 更新实时数据
                 realtime_data['positions_all'] = positions_all
 
-            # 休眠间隔
-            time.sleep(3)
+            # 休眠间隔（分段休眠，更快响应停止信号）
+            for _ in range(30):  # 3秒 = 30 * 0.1秒
+                if stop_push_flag:
+                    logger.info("[推送线程] 休眠中检测到停止标志，立即退出")
+                    return
+                time.sleep(0.1)
         except Exception as e:
             logger.error(f"推送实时数据时出错: {str(e)}")
-            time.sleep(3)  # 出错后休眠
+            # 出错后也要分段休眠
+            for _ in range(30):
+                if stop_push_flag:
+                    return
+                time.sleep(0.1)
 
 
 def start_push_thread():
@@ -2635,14 +2667,22 @@ def get_single_grid_checkbox_state(stock_code):
 
 def shutdown_web_server():
     """关闭Web服务器并清理资源"""
-    global stop_push_flag, api_executor
+    global stop_push_flag, api_executor, push_thread
 
     logger.info("正在关闭Web服务器...")
 
     try:
         # 停止推送线程
         stop_push_flag = True
-        logger.info("已停止推送线程")
+        logger.info("已设置停止标志，等待推送线程结束...")
+
+        # ⚠️ 修复: 等待推送线程真正结束（最多5秒）
+        if push_thread and push_thread.is_alive():
+            push_thread.join(timeout=5.0)
+            if push_thread.is_alive():
+                logger.warning("推送线程未在5秒内结束，继续关闭")
+            else:
+                logger.info("已停止推送线程")
     except Exception as e:
         logger.error(f"停止推送线程失败: {str(e)}")
 

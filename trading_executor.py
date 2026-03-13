@@ -1368,36 +1368,46 @@ class TradingExecutor:
     def get_trades(self, start_date=None, end_date=None):
         """
         获取成交记录
-        
+
         参数:
         start_date (str): 开始日期，格式 'YYYY-MM-DD'
         end_date (str): 结束日期，格式 'YYYY-MM-DD'
-        
+
         返回:
         pandas.DataFrame: 成交记录
         """
         try:
+            # ⚠️ 检查数据库连接是否已关闭
+            if not self.conn:
+                logger.debug("[TRADING] 数据库连接已关闭，跳过获取成交记录")
+                return pd.DataFrame()
+
             query = "SELECT * FROM trade_records"
             params = []
-            
+
             if start_date:
                 query += " WHERE trade_time >= ?"
                 params.append(start_date + " 00:00:00")
-                
+
                 if end_date:
                     query += " AND trade_time <= ?"
                     params.append(end_date + " 23:59:59")
             elif end_date:
                 query += " WHERE trade_time <= ?"
                 params.append(end_date + " 23:59:59")
-            
+
             query += " ORDER BY trade_time DESC"
-            
+
             df = pd.read_sql_query(query, self.conn, params=params)
             return df
-            
+
         except Exception as e:
-            logger.error(f"获取成交记录时出错: {str(e)}")
+            error_str = str(e).lower()
+            # 区分数据库关闭错误和真正的错误
+            if "closed database" in error_str or "database is locked" in error_str:
+                logger.debug(f"[TRADING] 数据库已关闭或锁定，跳过获取成交记录: {str(e)}")
+            else:
+                logger.error(f"获取成交记录时出错: {str(e)}")
             return pd.DataFrame()
     
     def close(self):
