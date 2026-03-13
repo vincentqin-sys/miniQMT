@@ -29,6 +29,8 @@ graph TD
     A --> E[web_server.py Web服务]
     A --> TM[thread_monitor.py 线程监控]
     A --> CM[config_manager.py 配置管理]
+    A --> PS[premarket_sync.py 盘前同步]
+    A --> XQM[xtquant_manager/ HTTP网关 可选]
 
     B --> B1[xtquant.xtdata 行情接口]
     B --> B2[SQLite 数据库]
@@ -37,6 +39,11 @@ graph TD
     C --> C2[SQLite 持久化]
     C --> C3[easy_qmt_trader QMT交易]
     C --> SM[sell_monitor.py 卖出监控]
+
+    B --> XQM_A[XtDataAdapter 行情适配]
+    C3 --> XQM_B[XtQuantClient 交易适配]
+    XQM_A --> XQM[xtquant_manager/ HTTP网关]
+    XQM_B --> XQM
 
     D --> C
     D --> F[trading_executor.py 交易执行]
@@ -199,10 +206,13 @@ graph LR
 | **strategy.py** | 交易策略逻辑 | `execute_trading_signal_direct()` | position_manager, trading_executor |
 | **web_server.py** | RESTful API服务 | Flask路由 | position_manager, strategy |
 | **easy_qmt_trader.py** | QMT API封装 | `order_stock()`, `query_stock_positions()` | xtquant.xttrader |
+| **premarket_sync.py** | 盘前同步与初始化 | `start_premarket_sync_scheduler()` | xtquant, position_manager |
+| **config_manager.py** | 配置持久化管理 | `save_config()`, `load_config()`, `update_config()` | SQLite |
+| **sell_monitor.py** | 卖出委托单监控 | `check_pending_sell_orders()`, `cancel_expired_orders()` | position_manager, trading_executor |
 | **grid_trading_manager.py** | 网格交易管理 | `check_grid_buy_signals()`, `check_grid_exit_condition()` | grid_database, position_manager |
 | **grid_database.py** | 网格数据持久化 | `create_grid_session()`, `add_grid_trade()` | SQLite |
-| **config_manager.py** | 配置持久化管理 | `save_config()`, `load_config()`, `update_config()` | SQLite |
-| **sell_monitor.py** | 卖出监控线程 | `check_pending_sell_orders()`, `cancel_expired_orders()` | position_manager, trading_executor |
+| **grid_validation.py** | 网格参数校验 | `validate_grid_params()` | config |
+| **xtquant_manager/** | HTTP网关（多账户，可选） | `XtQuantServer`, `XtQuantClient`, `XtDataAdapter` | xtquant, fastapi |
 
 ---
 
@@ -415,6 +425,59 @@ while not stop_flag:
 
     conn.commit()
 ```
+
+---
+
+## XtQuantManager 架构（可选模块）
+
+XtQuantManager 是 miniQMT 的可选 HTTP 网关层，通过 RESTful API 封装 xtquant 接口，解决多账户管理和统一超时保护问题。
+
+### 启用开关
+
+```python
+# config.py
+ENABLE_XTQUANT_MANAGER = False      # False=直连xtquant(默认), True=HTTP路由
+XTQUANT_MANAGER_URL = "http://127.0.0.1:8888"
+XTQUANT_MANAGER_TOKEN = ""          # 空=本机免认证
+```
+
+### 系统层级
+
+```
+miniQMT 主体代码 (position_manager / data_manager)
+        ↓ ENABLE_XTQUANT_MANAGER=True 时
+XtQuantClient (兼容 easy_qmt_trader 方法签名)
+XtDataAdapter  (兼容 xtquant.xtdata 接口)
+        ↓ HTTP REST API
+XtQuantServer (FastAPI + uvicorn, 127.0.0.1:8888)
+        ↓
+XtQuantManager (多账号注册表 + 请求分发)
+        ↓
+XtQuantAccount × N (每账号独立连接 + 健康监控)
+        ↓
+xtquant API (xttrader + xtdata, 本机QMT客户端)
+```
+
+### 三级健康监控
+
+```
+Level 0  每30s  is_healthy()    ← 内存状态检查(无I/O)
+              │ 不健康
+Level 1        ping()           ← 真实探测(get_full_tick, 3s超时)
+              │ 失败
+Level 2        reconnect()      ← 指数退避重连(60s→3600s)
+```
+
+### 何时启用
+
+| 场景 | 建议 |
+|------|------|
+| 单账户单机运行 | 保持 `False`（默认，零依赖） |
+| 多账户并发管理 | 设为 `True` |
+| 需要统一可观测指标 | 设为 `True` |
+| 网络隔离部署 | 设为 `True`（通过局域网访问） |
+
+详细说明见 [docs/xtquant_manager.md](docs/xtquant_manager.md)
 
 ---
 
@@ -1121,6 +1184,9 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 | `ENABLE_THREAD_MONITOR` | `True` | 线程健康监控 |
 | `ENABLE_GRID_TRADING` | `False` | 网格交易功能开关 |
 | `ENABLE_SELL_MONITOR` | `False` | 卖出监控功能开关 |
+| `ENABLE_XTQUANT_MANAGER` | `False` | XtQuantManager HTTP网关（多账户） |
+| `ENABLE_HEARTBEAT_LOG` | `True` | 心跳日志（每30分钟输出系统状态） |
+| `ENABLE_PREMARKET_XTQUANT_REINIT` | `True` | 盘前9:25自动重新初始化xtquant |
 | `DEBUG` | `False` | 调试模式 |
 
 #### 线程相关
@@ -1190,6 +1256,6 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 
 ---
 
-**文档版本**: v1.1
-**最后更新**: 2026-02-17
+**文档版本**: v1.2
+**最后更新**: 2026-03-13
 **维护者**: miniQMT Team

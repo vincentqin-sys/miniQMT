@@ -28,6 +28,7 @@ miniQMT 是一个专为A股市场设计的**无人值守量化交易系统**,集
 - **⚙️ 配置管理**: Web界面动态配置,无需重启系统
 - **🔍 卖出监控**: 委托单超时监控与自动撤单
 - **🧪 模拟交易**: 完整的模拟交易功能,策略验证零风险
+- **🔗 XtQuantManager**: 可选HTTP网关,支持多账户统一管理
 
 ---
 
@@ -47,6 +48,9 @@ miniQMT 是一个专为A股市场设计的**无人值守量化交易系统**,集
 - ✅ **非交易时段优化**: 自动降低CPU占用(30% → <2%)
 - ✅ **内存数据库并发优化**: 16处加锁保护,确保线程安全
 - ✅ **配置动态更新**: Web界面修改配置,无需重启系统
+- ✅ **盘前自动同步**: 每日9:25自动重新初始化xtquant连接
+- ✅ **心跳日志**: 每30分钟输出系统健康状态摘要
+- ✅ **XtQuantManager**: 可选HTTP网关,支持多账户管理与可观测指标
 
 ### 监控功能
 - ✅ **Web实时监控**: 账户信息、持仓列表、网格会话实时更新
@@ -105,6 +109,20 @@ python main.py
 http://localhost:5000
 ```
 
+### 一键启动（可选）
+
+项目提供 `launcher.bat` 脚本支持一键启动，环境配置在 `launcher.ini` 中：
+
+```ini
+[Environment]
+ENV_TYPE=conda           # conda 或 uv
+CONDA_ENV=python39       # conda环境名
+WORK_DIR=c:\github-repo\miniQMT
+PYTHON_SCRIPT=main.py
+```
+
+双击 `launcher.bat` 即可自动激活环境并启动系统。
+
 ### ⚠️ 首次运行建议
 
 **强烈建议先使用模拟模式测试**:
@@ -138,7 +156,7 @@ http://localhost:5000
 │  网格交易 (grid_trading_manager) → 网格会话管理          │
 │  卖出监控 (sell_monitor) → 委托单超时撤单                │
 └─────────────────────────────────────────────────────────┘
-
+```
 
 ### 数据流
 
@@ -172,6 +190,7 @@ ENABLE_GRID_TRADING = False        # 网格交易功能
 # 系统功能
 ENABLE_THREAD_MONITOR = True    # 线程健康监控（无人值守必需）⭐
 ENABLE_SELL_MONITOR = False     # 卖出监控开关
+ENABLE_XTQUANT_MANAGER = False  # XtQuantManager HTTP网关（多账户时开启）
 DEBUG = False                   # 调试模式
 ```
 
@@ -220,8 +239,10 @@ ORDER_CHECK_INTERVAL = 2        # 委托单检查间隔(秒)
 
 - **[CLAUDE.md](CLAUDE.md)** - 开发指南(面向AI助手和开发者)
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - 详细架构说明
+- **[QUICK_START.md](QUICK_START.md)** - 快速入门指南
 - **[docs/quick_start_unattended.md](docs/quick_start_unattended.md)** - 无人值守运行指南
 - **[docs/unattended_operation_summary.md](docs/unattended_operation_summary.md)** - 线程监控详解
+- **[docs/xtquant_manager.md](docs/xtquant_manager.md)** - XtQuantManager 多账户网关说明
 
 ---
 
