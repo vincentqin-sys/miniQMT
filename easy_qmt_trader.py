@@ -516,6 +516,9 @@ class easy_qmt_trader:
         对接同花顺
         '''
         try:
+            if not self.xt_trader:
+                logger.debug('xt_trader未连接，返回空DataFrame')
+                return pd.DataFrame()
             asset = self.xt_trader.query_stock_asset(account=self.acc)
             df=pd.DataFrame()
             if asset:

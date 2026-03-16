@@ -128,6 +128,14 @@
       ],
       "priority": "critical"
     },
+    "xtdata_data_source": {
+      "name": "xtdata 行情数据源测试",
+      "description": "验证 DataManager.ensure_subscribed 动态订阅（去重/异常处理）、get_latest_data xtdata->Mootdx fallback 三条路径、以及盘中新持仓加入时自动订阅的集成行为",
+      "modules": [
+        "test.test_xtdata_data_source"
+      ],
+      "priority": "high"
+    },
     "indicator_calculator": {
       "name": "技术指标计算器测试",
       "description": "验证 indicator_calculator.py 全部方法的正确性：增量/全量 MA/MACD 计算、EWM 路径依赖一致性、公式数值验证、买卖信号判断、数据库写入幂等性",

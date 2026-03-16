@@ -83,9 +83,62 @@ class DataManager:
             # 验证连接状态
             self._verify_connection()
 
+            # 订阅股票池，确保交易时段 get_full_tick 返回实时价格
+            self._subscribe_stocks_to_xtdata(config.STOCK_POOL)
+
         except Exception as e:
             logger.error(f"初始化行情接口出错: {str(e)}")
             self.xt = None
+
+    def _subscribe_stocks_to_xtdata(self, stock_list):
+        """订阅股票池到 xtdata，保证交易时段 get_full_tick 返回实时推送价格。
+        subscribe_quote(count=0) 表示只订阅实时推送，不拉取历史数据。
+        """
+        if not self.xt or not stock_list:
+            return
+        ok, fail = 0, 0
+        for stock in stock_list:
+            code = self._adjust_stock(stock)
+            try:
+                self.xt.subscribe_quote(
+                    code,
+                    period='tick',
+                    start_time='',
+                    end_time='',
+                    count=0,
+                    callback=None,
+                )
+                if code not in self.subscribed_stocks:
+                    self.subscribed_stocks.append(code)
+                ok += 1
+            except Exception as e:
+                logger.warning(f"xtdata subscribe_quote 失败: {code} - {e}")
+                fail += 1
+        logger.info(f"xtdata 订阅股票池完成: 成功 {ok} 只，失败 {fail} 只，共 {ok+fail} 只")
+
+    def ensure_subscribed(self, stock_code):
+        """确保股票已订阅到 xtdata 实时推送。
+        盘中新持仓加入时调用，保证下一个心跳就能拿到实时价格。
+        已订阅则直接返回；未订阅则立即订阅并追踪到 subscribed_stocks。
+        """
+        if not self.xt:
+            return
+        code = self._adjust_stock(stock_code)
+        if code in self.subscribed_stocks:
+            return  # 已订阅，无需重复操作
+        try:
+            self.xt.subscribe_quote(
+                code,
+                period='tick',
+                start_time='',
+                end_time='',
+                count=0,
+                callback=None,
+            )
+            self.subscribed_stocks.append(code)
+            logger.info(f"xtdata 动态订阅新股票: {code}")
+        except Exception as e:
+            logger.warning(f"xtdata 动态订阅失败: {code} - {e}")
 
     def _verify_connection(self):
         """验证连接状态"""
@@ -427,6 +480,10 @@ class DataManager:
         
         logger.info(f"下载 {stock_code} 的历史数据, 周期: {period}, 从 {start_date} 到 {end_date}")
 
+        if not self.xt:
+            logger.debug(f"xtdata未连接，跳过下载 {stock_code} 历史数据")
+            return None
+
         try:
             # ⭐ 超时优化：为xtquant API调用添加超时保护
             import concurrent.futures
@@ -720,9 +777,33 @@ class DataManager:
                     if realtime_data and realtime_data.get('lastPrice', 0) > 0:
                         logger.debug(f"XT获取 {stock_code} 实时数据 {realtime_data.get('lastPrice')}")
                         return realtime_data
+                    if realtime_data:
+                        # 有数据但 lastPrice=0：判断是否已订阅
+                        code = self._adjust_stock(stock_code)
+                        if code in self.subscribed_stocks:
+                            # 已订阅但价格为0，属于异常（推送延迟或连接不稳定），降级并警告
+                            logger.warning(f"xtdata: {stock_code} 已订阅但 lastPrice=0，降级到Mootdx")
+                        else:
+                            # 未订阅（盘中新增持仓的典型情况），立即触发订阅，本次降级
+                            self.ensure_subscribed(stock_code)
+                            logger.info(f"xtdata: {stock_code} 未订阅(lastPrice=0)，已触发订阅，本次降级到Mootdx")
+                    else:
+                        # 空 dict：xt 连接超时或股票代码不存在，静默降级
+                        logger.debug(f"xtdata: {stock_code} 无数据，降级到Mootdx")
                 except Exception as e:
                     logger.debug(f"实时数据管理器获取{stock_code}失败，降级到Mootdx: {str(e)}")
                     
+            # 非交易时段：优先尝试 xtdata get_full_tick（盘后返回收盘快照，lastClose 可靠）
+            # 这样可以正确计算涨跌幅，不依赖 Mootdx 的 offset=2 返回行数是否足够
+            if not config.is_trade_time() and self.xt:
+                try:
+                    xt_data = self.get_latest_xtdata(stock_code)
+                    if xt_data and xt_data.get('lastPrice', 0) > 0 and xt_data.get('lastClose', 0) > 0:
+                        logger.debug(f"非交易时段 xtdata 快照: {stock_code} lastPrice={xt_data.get('lastPrice')} lastClose={xt_data.get('lastClose')}")
+                        return xt_data
+                except Exception as e:
+                    logger.debug(f"非交易时段 xtdata 获取失败，降级到Mootdx: {e}")
+
             # 继续尝试从Mootdx获取数据
             # Adjust stock code if necessary
             if stock_code.endswith((".SH", ".SZ")):
@@ -757,6 +838,10 @@ class DataManager:
                 logger.warning(f"使用Mootdx获取 {stock_code} 的最新行情为空")
                 return None
 
+            if len(df) < 2:
+                logger.warning(f"Mootdx: {stock_code} 数据行数不足({len(df)}行)，无法计算lastClose")
+                return None
+
             # Extract the latest data
             latest_data = df.iloc[-1].to_dict()
             lastday_data = df.iloc[-2].to_dict()
@@ -788,14 +873,14 @@ class DataManager:
         """获取最新行情数据"""
         stock_code = self._adjust_stock(stock_code)
 
+        if not self.xt:
+            return {}
+
         try:
             # ⚠️ 检测Python解释器是否正在关闭
+            # sys.is_finalizing 是函数对象（truthy），必须调用才能获取布尔值
             import sys
-            if not hasattr(sys, 'flags') or not sys.is_finalizing:
-                # 正常运行状态
-                pass
-            else:
-                # 解释器正在关闭，直接返回
+            if hasattr(sys, 'is_finalizing') and sys.is_finalizing():
                 logger.debug(f"[DATA] 检测到解释器正在关闭，跳过获取 {stock_code} 行情")
                 return {}
 

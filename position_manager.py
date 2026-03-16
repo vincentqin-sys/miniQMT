@@ -403,6 +403,8 @@ class PositionManager:
                                 current_price=current_price,
                                 open_date=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             )
+                            # 实盘新增持仓：确保已订阅到 xtdata 实时推送
+                            self.data_manager.ensure_subscribed(stock_code)
 
                         # 添加到当前持仓集合
                         current_positions.add(stock_code)
@@ -2506,13 +2508,16 @@ class PositionManager:
             
             if success:
                 logger.info(f"[模拟交易] {stock_code} 买入完成")
-                
+
                 # 更新模拟账户资金
                 config.SIMULATION_BALANCE -= cost
                 logger.info(f"[模拟交易] 账户资金减少: -{cost:.2f}, 当前余额: {config.SIMULATION_BALANCE:.2f}")
-                
+
                 # 触发数据版本更新
                 self._increment_data_version()
+
+                # 盘中新增持仓：确保已订阅到 xtdata 实时推送
+                self.data_manager.ensure_subscribed(stock_code)
             else:
                 logger.error(f"[模拟交易] {stock_code} 持仓更新失败")
             
@@ -3156,7 +3161,44 @@ class PositionManager:
                     latest_data = self.data_manager.get_latest_data(stock_code)
                     if latest_data:
                         all_latest_data[stock_code] = latest_data
-                
+
+                # 修复重启后 current_price=0 的问题：若内存 DB 价格为0但行情有效，立即更新
+                prices_to_fix = {}
+                for stock_code, latest_data in all_latest_data.items():
+                    fresh_price = latest_data.get('lastPrice', 0)
+                    if fresh_price and fresh_price > 0:
+                        row = df[df['stock_code'] == stock_code]
+                        if not row.empty:
+                            db_price = row.iloc[0].get('current_price')
+                            if db_price is None or pd.isna(db_price) or float(db_price) == 0:
+                                prices_to_fix[stock_code] = fresh_price
+
+                if prices_to_fix:
+                    try:
+                        with self.memory_conn_lock:
+                            for stock_code, fresh_price in prices_to_fix.items():
+                                self.memory_conn.execute(
+                                    "UPDATE positions SET current_price=?, market_value=?*volume, "
+                                    "profit_ratio=CASE WHEN cost_price>0 THEN 100.0*(?-cost_price)/cost_price ELSE 0 END "
+                                    "WHERE stock_code=? AND (current_price IS NULL OR current_price=0)",
+                                    (fresh_price, fresh_price, fresh_price, stock_code))
+                            self.memory_conn.commit()
+                        for stock_code, fresh_price in prices_to_fix.items():
+                            df.loc[df['stock_code'] == stock_code, 'current_price'] = fresh_price
+                            # 同步更新 market_value = price * volume
+                            vol = df.loc[df['stock_code'] == stock_code, 'volume']
+                            if not vol.empty:
+                                df.loc[df['stock_code'] == stock_code, 'market_value'] = fresh_price * float(vol.iloc[0])
+                            # 同步更新 profit_ratio = (current_price - cost_price) / cost_price
+                            cost = df.loc[df['stock_code'] == stock_code, 'cost_price']
+                            if not cost.empty:
+                                cost_val = float(cost.iloc[0])
+                                if cost_val > 0:
+                                    df.loc[df['stock_code'] == stock_code, 'profit_ratio'] = round(100 * (fresh_price - cost_val) / cost_val, 2)
+                            logger.debug(f"启动价格修复: {stock_code} current_price 0 -> {fresh_price}")
+                    except Exception as e:
+                        logger.debug(f"启动价格修复失败: {e}")
+
                 # 计算涨跌幅
                 change_percentages = {}
                 for stock_code in df['stock_code']:
@@ -3257,6 +3299,7 @@ class PositionManager:
                                     f'❌ [MONITOR][非交易时段] 连续 {consecutive_errors} 次断连，触发重连'
                                 )
                                 self._attempt_qmt_reconnect()
+                                consecutive_errors = 0
                         else:
                             if consecutive_errors > 0:
                                 logger.info(
