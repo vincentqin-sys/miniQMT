@@ -476,9 +476,8 @@ def reinit_xtquant_trader():
             connect_result = qmt_trader.connect()
 
             if connect_result is None:
-                logger.warning("  ⚠ 交易接口连接返回None (可能已连接或连接失败)")
-                # 模仿系统初始化的容错逻辑: 返回None也继续运行
-                return True
+                logger.warning("  ⚠ 交易接口连接失败 (connect返回None)")
+                return False
             else:
                 logger.info("  ✓ 交易接口连接成功")
                 return True

@@ -318,7 +318,9 @@ class easy_qmt_trader:
             return xt_trader,acc
         else:
             logger.error(f'QMT连接失败, 连接结果={connect_result}')
-            # 🔧 修复：连接失败时返回None，方便调用方检测
+            # 连接失败：重置为 None，避免 self.xt_trader 停留在 '' 字符串状态
+            self.xt_trader = None
+            self.acc = None
             return None
     def order_stock(self,stock_code='600031.SH', order_type=xtconstant.STOCK_BUY,
                     order_volume=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
