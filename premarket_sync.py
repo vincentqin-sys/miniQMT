@@ -477,15 +477,35 @@ def reinit_xtquant_trader():
 
             if connect_result is None:
                 logger.warning("  ⚠ 交易接口连接失败 (connect返回None)")
+                # 🔧 Fix: connect() 已将 xt_trader 置 None，必须同步标记 qmt_connected=False
+                # 否则持仓监控线程看到 qmt_connected=True 以为连接正常，永不触发自动重连
+                position_manager.qmt_connected = False
+                logger.warning("  ⚠ 已标记 qmt_connected=False，持仓监控线程将在冷却后自动重连")
                 return False
             else:
                 logger.info("  ✓ 交易接口连接成功")
+                # 🔧 Fix: 成功后同步更新状态并重新注册回调，避免回调丢失
+                position_manager.qmt_connected = True
+                try:
+                    if hasattr(position_manager, '_on_trade_callback'):
+                        qmt_trader.register_trade_callback(position_manager._on_trade_callback)
+                        logger.info("  ✓ 已重新注册 trade_callback")
+                except Exception as cb_e:
+                    logger.warning(f"  ⚠ 重新注册 trade_callback 失败(非致命): {cb_e}")
+                try:
+                    if hasattr(position_manager, '_on_qmt_disconnect'):
+                        qmt_trader.register_disconnect_callback(position_manager._on_qmt_disconnect)
+                        logger.info("  ✓ 已重新注册 disconnect_callback")
+                except Exception as cb_e:
+                    logger.warning(f"  ⚠ 重新注册 disconnect_callback 失败(非致命): {cb_e}")
                 return True
 
         except Exception as e:
             logger.warning(f"  ⚠ 连接过程异常: {e}")
-            # 模仿系统初始化: 异常不阻止系统运行
-            return True
+            # connect() 抛异常也意味着 xt_trader 状态不可信，标记断连
+            position_manager.qmt_connected = False
+            logger.warning("  ⚠ 连接异常，已标记 qmt_connected=False，监控线程将自动重连")
+            return False
 
     except ImportError as e:
         logger.error(f"  ✗ 导入模块失败: {e}")

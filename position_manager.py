@@ -3282,6 +3282,16 @@ class PositionManager:
                     # 即使非交易时段，也必须保持对 QMT 断连的感知和重连能力，
                     # 否则用户在 18:xx 测试时永远观察不到重连效果。
                     if not config.ENABLE_SIMULATION_MODE and not getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
+                        # 🔧 Fix: 盘前同步可能将 xt_trader 置 None 但不触发 on_disconnected 回调
+                        # 此处主动检测 xt_trader 与 qmt_connected 是否一致，确保监控线程能感知断连
+                        if (self.qmt_connected and
+                                hasattr(self.qmt_trader, 'xt_trader') and
+                                (self.qmt_trader.xt_trader is None or self.qmt_trader.xt_trader == '')):
+                            logger.warning(
+                                '[MONITOR][非交易时段] 检测到 xt_trader=None 但 qmt_connected=True，'
+                                '可能是盘前同步connect()失败导致，强制标记断连'
+                            )
+                            self.qmt_connected = False
                         qmt_ok = self.qmt_connected
                         logger.debug(
                             f'[MONITOR][非交易时段][loop#{loop_count}] '
