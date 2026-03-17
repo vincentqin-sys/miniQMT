@@ -124,11 +124,12 @@ class TestGetLatestDataFallback(TestBase):
         self.dm.subscribed_stocks = []
 
     def _make_mootdx_df(self, last_price):
-        """构造 Mootdx 返回的 DataFrame 格式"""
+        """构造 Mootdx 返回的 DataFrame 格式（至少2行，才能计算 lastClose）"""
         import pandas as pd
-        return pd.DataFrame({'last': [last_price], 'open': [last_price],
-                             'high': [last_price], 'low': [last_price],
-                             'close': [last_price]})
+        prev_price = round(last_price - 0.1, 2)
+        return pd.DataFrame({'last': [prev_price, last_price], 'open': [prev_price, last_price],
+                             'high': [prev_price, last_price], 'low': [prev_price, last_price],
+                             'close': [prev_price, last_price]})
 
     def test_xtdata_valid_price_returns_immediately(self):
         """xtdata 返回有效 lastPrice > 0 时，直接返回，不调用 Mootdx"""
@@ -178,7 +179,8 @@ class TestGetLatestDataFallback(TestBase):
             self.assertEqual(warning_logs, [], f"空 dict 不应产生 WARNING，但有: {warning_logs}")
 
     def test_non_trade_time_skips_xtdata(self):
-        """非交易时段不走 xtdata 路径"""
+        """非交易时段且无 xtdata 连接时不走 xtdata 路径"""
+        self.dm.xt = None  # 模拟无 xtdata 连接，非交易时段优化路径不触发
         self.dm.get_latest_xtdata = MagicMock()
         mock_df = self._make_mootdx_df(13.59)
         with patch('config.is_trade_time', return_value=False), \
