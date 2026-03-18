@@ -450,10 +450,10 @@ def reinit_xtquant_trader():
     """
     重新初始化xtquant交易接口
 
-    设计理念: 完全模仿系统初始化(PositionManager.__init__)的行为
-    - 不检查现有状态
-    - 总是调用 connect()
-    - 简单直接,与系统初始化一致
+    设计理念: 先检测现有连接，避免无谓地断开正常连接
+    - 若 xttrader 已连通 (ping 成功)，仅同步状态标记，跳过 connect()
+    - 若 xttrader 已断连，则调用 connect() 重建连接
+    这样解决了 QMT 持续运行时盘前初始化反而杀掉连接的问题
 
     返回: bool 成功/失败
     """
@@ -469,22 +469,38 @@ def reinit_xtquant_trader():
 
         qmt_trader = position_manager.qmt_trader
 
-        # 模仿系统初始化: 直接调用 connect()
-        logger.info("  → 调用 qmt_trader.connect() 重新连接...")
+        # 🔧 Fix: 先 ping 检测现有连接，避免在连接正常时无谓 stop() + connect()
+        # 历史问题: connect() 会先 stop() 旧连接，stop() 后立即重连，QMT 可能返回 -1
+        logger.info("  → 探测现有 xttrader 连接状态...")
+        ping_ok = False
+        try:
+            ping_ok = qmt_trader.ping_xttrader()
+        except Exception as pe:
+            logger.warning(f"  ⚠ ping_xttrader 异常: {pe}")
+            ping_ok = False
+
+        if ping_ok:
+            # 连接正常，无需 connect()，只同步状态即可
+            logger.info("  ✓ xttrader 连接正常，跳过 connect()（保留现有连接）")
+            position_manager.qmt_connected = True
+            return True
+
+        # 连接不正常，才执行重连
+        logger.info("  → xttrader 未连通，调用 qmt_trader.connect() 重新连接...")
 
         try:
             connect_result = qmt_trader.connect()
 
             if connect_result is None:
                 logger.warning("  ⚠ 交易接口连接失败 (connect返回None)")
-                # 🔧 Fix: connect() 已将 xt_trader 置 None，必须同步标记 qmt_connected=False
+                # connect() 已将 xt_trader 置 None，必须同步标记 qmt_connected=False
                 # 否则持仓监控线程看到 qmt_connected=True 以为连接正常，永不触发自动重连
                 position_manager.qmt_connected = False
                 logger.warning("  ⚠ 已标记 qmt_connected=False，持仓监控线程将在冷却后自动重连")
                 return False
             else:
                 logger.info("  ✓ 交易接口连接成功")
-                # 🔧 Fix: 成功后同步更新状态并重新注册回调，避免回调丢失
+                # 成功后同步更新状态并重新注册回调，避免回调丢失
                 position_manager.qmt_connected = True
                 try:
                     if hasattr(position_manager, '_on_trade_callback'):

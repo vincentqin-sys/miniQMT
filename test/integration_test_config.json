@@ -116,7 +116,8 @@
       "modules": [
         "test.test_system_integration",
         "test.test_unattended_operation",
-        "test.test_thread_monitoring"
+        "test.test_thread_monitoring",
+        "test.test_premarket_xttrader_reinit"
       ],
       "priority": "critical"
     },
@@ -167,7 +168,8 @@
         "test.test_db_op_safety_verification",
         "test.test_web_api_complete",
         "test.test_indicator_all_methods",
-        "test.test_grid_trading_bug_fixes"
+        "test.test_grid_trading_bug_fixes",
+        "test.test_premarket_xttrader_reinit"
       ],
       "priority": "critical"
     }
