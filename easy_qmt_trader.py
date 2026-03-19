@@ -318,6 +318,12 @@ class easy_qmt_trader:
             return xt_trader,acc
         else:
             logger.error(f'QMT连接失败, 连接结果={connect_result}')
+            # 连接失败：停止新建线程，避免残留后台线程
+            try:
+                xt_trader.stop()
+                logger.info('已停止失败的 XtQuantTrader 实例')
+            except Exception as e:
+                logger.warning(f'停止失败的 XtQuantTrader 实例出错 (忽略): {e}')
             # 连接失败：重置为 None，避免 self.xt_trader 停留在 '' 字符串状态
             self.xt_trader = None
             self.acc = None

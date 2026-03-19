@@ -59,6 +59,13 @@ class DataManager:
         
         # 已订阅的股票代码列表
         self.subscribed_stocks = []
+
+        # xtdata断连自动重连控制
+        self._xtdata_reconnect_lock = threading.Lock()
+        self._xtdata_last_reconnect_time = 0.0
+        self._xtdata_reconnect_errors = 0
+        self._xtdata_reconnect_threshold = getattr(config, "XTQUANT_DATA_RECONNECT_ON_ERRORS", 3)
+        self._xtdata_reconnect_interval = getattr(config, "XTQUANT_DATA_RECONNECT_INTERVAL", 60)
         
         # # 初始化行情接口 
         self._init_xtquant()
@@ -154,6 +161,46 @@ class DataManager:
                 return False
         except Exception as e:
             logger.warning(f"xtquant连接验证出错: {str(e)}")
+            return False
+
+    def _record_xtdata_failure(self, reason=""):
+        """记录xtdata失败并按阈值触发重连"""
+        self._xtdata_reconnect_errors += 1
+        if self._xtdata_reconnect_errors >= self._xtdata_reconnect_threshold:
+            if self._attempt_xtdata_reconnect(reason):
+                self._xtdata_reconnect_errors = 0
+
+    def _reset_xtdata_failure(self):
+        """重置xtdata失败计数"""
+        self._xtdata_reconnect_errors = 0
+
+    def _attempt_xtdata_reconnect(self, reason=""):
+        """尝试重连xtdata并恢复订阅"""
+        if not self.xt:
+            return False
+
+        with self._xtdata_reconnect_lock:
+            now = time.time()
+            if now - self._xtdata_last_reconnect_time < self._xtdata_reconnect_interval:
+                return False
+            self._xtdata_last_reconnect_time = now
+
+        try:
+            reconnect_ok = False
+            if hasattr(self.xt, "reconnect"):
+                reconnect_ok = self.xt.reconnect()
+            elif hasattr(self.xt, "connect"):
+                reconnect_ok = self.xt.connect()
+
+            if reconnect_ok:
+                # 复订阅：优先使用已订阅列表，否则用股票池
+                stocks = list(dict.fromkeys(self.subscribed_stocks)) if self.subscribed_stocks else list(config.STOCK_POOL)
+                if stocks:
+                    self._subscribe_stocks_to_xtdata(stocks)
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"xtdata重连失败: {e}")
             return False
 
     def _connect_db(self):
@@ -895,6 +942,7 @@ class DataManager:
                 latest_quote = future.result(timeout=3.0)  # 3秒超时
             except concurrent.futures.TimeoutError:
                 logger.warning(f"xtdata: 获取 {stock_code} 行情超时（3秒）")
+                self._record_xtdata_failure("timeout")
                 return {}  # 返回空字典，与原逻辑一致
             except RuntimeError as e:
                 # 捕获"cannot schedule new futures after interpreter shutdown"错误
@@ -905,11 +953,12 @@ class DataManager:
 
             if not latest_quote or stock_code not in latest_quote:
                 logger.warning(f"xtdata:未获取到 {stock_code} 的tick行情，返回值: {latest_quote}")
+                self._record_xtdata_failure("empty_quote")
                 return {}  # 返回空字典而不是None
 
             quote_data = latest_quote[stock_code]
             logger.debug(f"xtdata: {stock_code} 最新行情: {quote_data}")
-
+            self._reset_xtdata_failure()
             return quote_data
 
         except Exception as e:
@@ -919,6 +968,7 @@ class DataManager:
                 logger.debug(f"[DATA] 系统正在关闭，跳过获取 {stock_code} 行情")
                 return {}
             logger.error(f"xtdata: 获取 {stock_code} 的最新行情时出错: {str(e)}", exc_info=True)
+            self._record_xtdata_failure("exception")
             return {}  # 返回空字典而不是None
 
     def get_history_data_from_db(self, stock_code, start_date=None, end_date=None):
