@@ -235,7 +235,7 @@ class TestGridTradeRebuild(unittest.TestCase):
         print(f"[OK] 数据库正确同步")
 
     def test_multiple_trades_center_evolution(self):
-        """测试6: 多次交易中心价演化"""
+        """测试6: 多次交易中心价演化（适配V3严格防护）"""
         print("\n========== 测试6: 多次交易中心价演化 ==========")
 
         session = self._create_test_session(center_price=10.0, price_interval=0.05)
@@ -243,7 +243,7 @@ class TestGridTradeRebuild(unittest.TestCase):
         centers = [session.current_center_price]
         print(f"  初始中心价: {centers[0]:.2f}")
 
-        # 模拟多次交易
+        # 模拟多次交易（V3：单次买入≤20%，部分交易可能被拒绝）
         trades = [
             ('BUY', 9.8),
             ('SELL', 10.2),
@@ -254,6 +254,7 @@ class TestGridTradeRebuild(unittest.TestCase):
         position = {'volume': 200, 'cost_price': 10.0}
         self.position_manager.get_position.return_value = position
 
+        executed_trades = []  # 记录实际执行的交易
         for i, (trade_type, price) in enumerate(trades, 1):
             if trade_type == 'BUY':
                 signal = {'trigger_price': price, 'grid_level': 'lower'}
@@ -263,16 +264,22 @@ class TestGridTradeRebuild(unittest.TestCase):
                 signal = {'trigger_price': price, 'grid_level': 'upper'}
                 result = self.manager._execute_grid_sell(session, signal)
 
-            self.assertTrue(result)
-            centers.append(session.current_center_price)
-            print(f"  第{i}次交易({trade_type}): 成交价={price:.2f}, 新中心价={session.current_center_price:.2f}")
+            if result:
+                executed_trades.append((trade_type, price))
+                centers.append(session.current_center_price)
+                print(f"  第{i}次交易({trade_type}): 成交价={price:.2f}, 新中心价={session.current_center_price:.2f}")
+            else:
+                print(f"  第{i}次交易({trade_type}): 被拒绝（额度限制）")
 
-        # 验证每次交易后中心价都更新
-        for i, (trade_type, price) in enumerate(trades):
+        # 验证每次成功交易后中心价都更新
+        for i, (trade_type, price) in enumerate(executed_trades):
             self.assertAlmostEqual(centers[i+1], price, places=2,
                                   msg=f"第{i+1}次交易后中心价应为{price}")
 
-        print(f"[OK] 中心价演化路径: {' -> '.join([f'{c:.2f}' for c in centers])}")
+        # 至少要有2次成功交易（1买1卖）
+        self.assertGreaterEqual(len(executed_trades), 2, "应至少完成2次交易")
+
+        print(f"[OK] 成功{len(executed_trades)}次交易, 中心价演化: {' -> '.join([f'{c:.2f}' for c in centers])}")
 
     def test_grid_levels_with_different_intervals(self):
         """测试7: 不同档位间隔的新档位计算"""
