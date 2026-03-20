@@ -220,6 +220,7 @@ class GridTradingManager:
         self.sessions: Dict[str, GridSession] = {}
         self.trackers: Dict[int, PriceTracker] = {}
         self.level_cooldowns: Dict[tuple, float] = {}
+        self.last_buy_times: Dict[int, float] = {}  # {session_id: timestamp} 每次成功买入后记录时间，支持 GRID_BUY_COOLDOWN
         self.lock = threading.RLock()  # 使用可重入锁,支持嵌套调用
 
         # 初始化:从数据库加载活跃会话
@@ -339,6 +340,25 @@ class GridTradingManager:
                         start_time=datetime.fromisoformat(session_dict['start_time']),
                         end_time=end_time
                     )
+
+                    # ── V2 修复：DB 加载时校验 current_investment ───────────────────────────
+                    # 场景：上次运行中买入成功但 DB 写入 current_investment 失败（磁盘/网络异常），
+                    # 重启后 current_investment 偏低，如不校正将允许超出 max_investment 的额外买入。
+                    # 保守策略：current_investment > max_investment 时，强制修正并写回 DB。
+                    if session.max_investment > 0 and session.current_investment > session.max_investment:
+                        logger.warning(
+                            f"[GRID] DB 一致性修正 session_id={session_id} "
+                            f"({session_dict['stock_code']}): "
+                            f"current_investment({session.current_investment:.2f}) > "
+                            f"max_investment({session.max_investment:.2f}), 修正为 max_investment"
+                        )
+                        session.current_investment = session.max_investment
+                        try:
+                            self.db.update_grid_session(session_id, {
+                                'current_investment': session.max_investment
+                            })
+                        except Exception as db_err:
+                            logger.warning(f"[GRID] DB 修正写回失败(可忽略，下次重启再修正): {db_err}")
                     self.sessions[stock_code_key] = session
                     # 使用数据库中保存的价格,避免在启动时调用position_manager
                     if position and isinstance(position, dict) and position.get('current_price'):
@@ -737,6 +757,14 @@ class GridTradingManager:
         # 检查下穿(买入档位)
         elif price < levels['lower'] and not tracker.waiting_callback:
             logger.debug(f"[GRID] _check_level_crossing: 检测到下穿买入档位 price={price:.2f} < lower={levels['lower']:.2f}")
+            # Gap 2修复：max_investment 耗尽时跳过买入穿越检测。
+            # 若不检查，买入失败后 tracker 虽重置为 waiting=False，但价格仍在下轨以下，
+            # 下一个 tick 立刻又检测到穿越并设置 waiting=True，形成每 6 秒一次的慢速循环。
+            if session.current_investment >= session.max_investment > 0:
+                logger.warning(f"[GRID] _check_level_crossing: {session.stock_code} max_investment已耗尽"
+                               f"({session.current_investment:.0f}/{session.max_investment:.0f}), "
+                               f"跳过买入档位穿越检测，等待卖出后资金回收")
+                return
             # 检查冷却
             if self._is_level_in_cooldown(session.id, levels['lower']):
                 logger.debug(f"[GRID] _check_level_crossing: 买入档位{levels['lower']:.2f}在冷却期, 跳过")
@@ -934,6 +962,16 @@ class GridTradingManager:
 
                 if not success:
                     logger.warning(f"[GRID] execute_grid_trade: 交易执行失败 stock_code={stock_code}, signal_type={signal_type}")
+                    # 修复：买入/卖出失败时重置追踪器 waiting_callback 状态。
+                    # 问题：失败时 tracker.waiting_callback 仍为 True，导致每 3 秒重新生成相同
+                    #       信号，信号被 P1-2 清除后再次生成，形成无限重试死循环。
+                    # 修复：失败后将追踪器重置为"等待穿越"状态，要求价格重新穿越档位才能触发新信号。
+                    tracker = self.trackers.get(session.id)
+                    if tracker:
+                        tracker.waiting_callback = False
+                        tracker.crossed_level = None
+                        logger.info(f"[GRID] execute_grid_trade: 交易失败，重置追踪器 waiting_callback=False "
+                                    f"stock_code={stock_code}, signal_type={signal_type}")
                     return False
 
                 # ⚠️ BUG修复: 使用相对于初始中心价的固定档位进行冷却
@@ -966,6 +1004,23 @@ class GridTradingManager:
 
         except Exception as e:
             logger.error(f"[GRID] execute_grid_trade: 执行网格交易失败: {str(e)}", exc_info=True)
+            # Gap 1修复：异常路径同样重置追踪器，防止与 success=False 路径不一致。
+            # 若不重置，任何 DB/网络异常都会导致 tracker.waiting_callback 留在 True，
+            # 重现无限重试死循环。
+            try:
+                stock_code_for_reset = signal.get('stock_code', '')
+                if stock_code_for_reset:
+                    with self.lock:
+                        session_for_reset = self.sessions.get(self._normalize_code(stock_code_for_reset))
+                        if session_for_reset:
+                            tracker_for_reset = self.trackers.get(session_for_reset.id)
+                            if tracker_for_reset:
+                                tracker_for_reset.waiting_callback = False
+                                tracker_for_reset.crossed_level = None
+                                logger.info(f"[GRID] execute_grid_trade: 异常后重置追踪器 "
+                                            f"stock_code={stock_code_for_reset}")
+            except Exception as reset_err:
+                logger.warning(f"[GRID] execute_grid_trade: 异常路径重置追踪器失败(可忽略): {reset_err}")
             return False
 
     def _execute_grid_buy(self, session: GridSession, signal: dict) -> bool:
@@ -978,6 +1033,17 @@ class GridTradingManager:
         if session.max_investment <= 0:
             logger.error(f"[GRID] _execute_grid_buy: {stock_code} max_investment={session.max_investment} 无效，无法执行买入")
             return False
+
+        # 0.5 检查成功买入冷却时间 (GRID_BUY_COOLDOWN)
+        # 防止9:25开盘后价格已低于下轨时，短时间内级联触发多次买入
+        buy_cooldown = getattr(config, 'GRID_BUY_COOLDOWN', 0)
+        if buy_cooldown > 0:
+            last_buy = self.last_buy_times.get(session.id, 0)
+            elapsed = time.time() - last_buy
+            if elapsed < buy_cooldown:
+                logger.warning(f"[GRID] _execute_grid_buy: {stock_code} 买入冷却中 "
+                               f"(剩余{buy_cooldown - elapsed:.0f}秒), 跳过买入")
+                return False
 
         # 1. 检查投入限额
         logger.debug(f"[GRID] _execute_grid_buy: 检查投入限额 current_investment={session.current_investment:.2f}, max_investment={session.max_investment:.2f}")
@@ -1015,15 +1081,33 @@ class GridTradingManager:
         actual_amount = volume * trigger_price
         logger.debug(f"[GRID] _execute_grid_buy: 执行买入 volume={volume}, actual_amount={actual_amount:.2f}")
 
+        # ── 硬上限校验 V3（防御性兜底，防浮点误差/逻辑bug） ──────────────────────────
+        # 无论 buy_amount/remaining 计算链路是否有误，此处确保 actual_amount 不超过剩余额度。
+        # 允许1分钱浮点误差容忍（0.01元），超出则中止本次买入。
+        remaining_strict = session.max_investment - session.current_investment
+        if actual_amount > remaining_strict + 0.01:
+            logger.error(
+                f"[GRID] _execute_grid_buy: HARD CAP 阻止超买 "
+                f"stock_code={stock_code}, actual_amount={actual_amount:.4f} > "
+                f"remaining={remaining_strict:.4f} (current={session.current_investment:.4f}, "
+                f"max={session.max_investment:.4f})"
+            )
+            return False
+
         if config.ENABLE_SIMULATION_MODE:
             trade_id = f"GRID_SIM_BUY_{int(time.time()*1000)}"
             logger.info(f"[GRID] _execute_grid_buy: [模拟]网格买入: {stock_code}, 数量={volume}, 价格={trigger_price:.2f}, trade_id={trade_id}")
         else:
-            # 实盘买入
-            logger.debug(f"[GRID] _execute_grid_buy: 调用executor.buy_stock 实盘买入")
+            # ── V1 修复：明确传入 volume+price，避免 executor 用市价重算量 ──────────────
+            # 若只传 amount，executor 会用实时市价重算股数，当计算量≤0时强制设100股，
+            # 可能导致实际下单金额远超 actual_amount（例如剩余50元却下了100股×市价的单）。
+            # 解决方案：直接传 volume 和 trigger_price，QMT 按指定价格下限价单。
+            logger.debug(f"[GRID] _execute_grid_buy: 调用executor.buy_stock 实盘买入 "
+                         f"volume={volume}, price={trigger_price:.2f}")
             result = self.executor.buy_stock(
                 stock_code=stock_code,
-                amount=actual_amount,
+                volume=volume,
+                price=trigger_price,
                 strategy=config.GRID_STRATEGY_NAME
             )
             if not result:
@@ -1042,6 +1126,16 @@ class GridTradingManager:
         session.buy_count += 1
         session.total_buy_amount += actual_amount
         session.current_investment += actual_amount
+
+        # ── 后置兜底校验（V3）：确保累加后不超限 ─────────────────────────────────────
+        # 理论上 actual_amount <= remaining 已在前置校验保证，此处作最后一道防线。
+        if session.current_investment > session.max_investment + 0.01:
+            logger.error(
+                f"[GRID] _execute_grid_buy: POST-UPDATE HARD CAP: "
+                f"current_investment={session.current_investment:.4f} > max_investment={session.max_investment:.4f}，"
+                f"强制修正至 max_investment（订单已下出，此次为记录修正）"
+            )
+            session.current_investment = session.max_investment
 
         logger.debug(f"[GRID] _execute_grid_buy: 更新会话统计 trade_count {old_trade_count}->{session.trade_count}, "
                     f"buy_count {old_buy_count}->{session.buy_count}, "
@@ -1079,6 +1173,9 @@ class GridTradingManager:
         # 7. 重建网格
         logger.debug(f"[GRID] _execute_grid_buy: 重建网格")
         self._rebuild_grid(session, trigger_price)
+
+        # 8. 记录本次买入时间，供 GRID_BUY_COOLDOWN 检查使用
+        self.last_buy_times[session.id] = time.time()
 
         logger.info(f"[GRID] _execute_grid_buy: 网格买入成功! stock_code={stock_code}, volume={volume}, amount={actual_amount:.2f}, "
                    f"investment={session.current_investment:.2f}/{session.max_investment:.2f}, trade_id={trade_id}")

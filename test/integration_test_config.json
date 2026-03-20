@@ -85,6 +85,14 @@
       ],
       "priority": "high"
     },
+    "grid_max_investment_safety": {
+      "name": "网格max_investment严格防护测试",
+      "description": "验证max_investment三重防护机制（V1: executor调用方式修复、V2: DB一致性校验、V3: 硬上限校验）确保实盘运行不会超买",
+      "modules": [
+        "test.test_max_investment_strict"
+      ],
+      "priority": "critical"
+    },
     "core_metrics": {
       "name": "核心指标与利润测试",
       "description": "验证网格利润计算和风险分级等核心指标",
@@ -169,7 +177,8 @@
         "test.test_web_api_complete",
         "test.test_indicator_all_methods",
         "test.test_grid_trading_bug_fixes",
-        "test.test_premarket_xttrader_reinit"
+        "test.test_premarket_xttrader_reinit",
+        "test.test_max_investment_strict"
       ],
       "priority": "critical"
     }

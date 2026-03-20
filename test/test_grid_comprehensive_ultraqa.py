@@ -152,32 +152,40 @@ class MockTradingExecutor:
         self.qmt_trader = qmt_trader
         self.trades = []
 
-    def buy_stock(self, stock_code, amount, strategy="grid"):
-        """模拟买入"""
-        # 使用当前价格(简化处理)
-        price = 10.0
-        volume = int(amount / price / 100) * 100
-
-        if volume == 0:
-            logger.warning(f"[MOCK] 买入数量不足100股, 跳过")
+    def buy_stock(self, stock_code, volume=None, price=None, amount=None, strategy="grid"):
+        """模拟买入（支持V1修复后的volume+price调用方式）"""
+        # V1修复后：优先使用 volume + price 参数
+        if volume is not None and price is not None:
+            # 使用传入的 volume 和 price
+            actual_volume = volume
+            actual_price = price
+        elif amount is not None:
+            # 兼容旧的 amount 方式（简化处理）
+            actual_price = 10.0
+            actual_volume = int(amount / actual_price / 100) * 100
+            if actual_volume == 0:
+                logger.warning(f"[MOCK] 买入数量不足100股, 跳过")
+                return None
+        else:
+            logger.error(f"[MOCK] buy_stock 缺少必要参数")
             return None
 
         trade_id = self.qmt_trader.order_stock(
-            None, stock_code, 23, volume, price, strategy_name=strategy
+            None, stock_code, 23, actual_volume, actual_price, strategy_name=strategy
         )
 
         self.trades.append({
             'stock_code': stock_code,
             'trade_type': 'BUY',
-            'volume': volume,
-            'price': price,
-            'amount': volume * price,
+            'volume': actual_volume,
+            'price': actual_price,
+            'amount': actual_volume * actual_price,
             'strategy': strategy,
             'trade_id': trade_id,
             'timestamp': datetime.now().isoformat()
         })
 
-        return {'order_id': trade_id, 'volume': volume, 'price': price}
+        return {'order_id': trade_id, 'volume': actual_volume, 'price': actual_price}
 
     def sell_stock(self, stock_code, volume, strategy="grid"):
         """模拟卖出"""

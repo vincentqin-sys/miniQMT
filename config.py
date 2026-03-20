@@ -562,6 +562,11 @@ GRID_CALLBACK_RATIO = 0.005  # 回调比例0.5%触发交易
 # 档位冷却时间(秒)
 GRID_LEVEL_COOLDOWN = 60  # 同一档位60秒内不重复触发
 
+# 成功买入后的最短间隔(秒) - 防止级联买入过快
+# 9:25开盘后若价格已低于下轨，连续跌穿多个档位会快速触发多次买入
+# 设为300(5分钟)可避免在极端开盘波动中过快消耗 max_investment
+GRID_BUY_COOLDOWN = 60  # 0=不限制(向后兼容默认值)；建议实盘设为 300
+
 # 启动条件配置
 GRID_REQUIRE_PROFIT_TRIGGERED = True  # 是否要求已触发止盈才能启动网格交易（True=更安全，False=更灵活）
 

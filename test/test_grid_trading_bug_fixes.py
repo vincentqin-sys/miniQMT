@@ -435,6 +435,223 @@ class TestGridTradingBugFixes(TestBase):
             # 验证信号已清除
             self.assertNotIn(stock_code, self.position_manager.latest_signals,
                            "P1-2修复验证：执行异常后，信号应被清除")
+    def test_P2_1_tracker_reset_on_buy_failure(self):
+        """
+        P2-1验证：买入失败时追踪器 waiting_callback 被重置
+
+        场景：
+        1. 下穿买入档位，tracker.waiting_callback=True
+        2. 触发 BUY 回调，生成信号
+        3. execute_grid_trade 因 max_investment 达上限返回 False
+        4. 验证 tracker.waiting_callback 已被重置为 False
+
+        若不修复此 Bug，tracker.waiting_callback 仍为 True，
+        每隔 3 秒 check_callback 会重新返回 BUY，形成无限重试循环。
+        """
+        stock_code = "600511.SH"
+
+        # 1. 启动会话
+        session_config = {
+            'center_price': 10.0,
+            'price_interval': 0.05,
+            'max_investment': 5000,
+            'callback_ratio': 0.005,
+            'duration_days': 7,
+        }
+        session = self.grid_manager.start_grid_session(stock_code, session_config)
+        session_id = session.id
+
+        # 2. 手动设置追踪器为"等待回调"状态（模拟下穿买入档位后）
+        with self.grid_manager.lock:
+            tracker = self.grid_manager.trackers[session_id]
+            tracker.waiting_callback = True
+            tracker.direction = 'falling'
+            tracker.valley_price = 9.4
+            tracker.last_price = 9.45   # 已回调 0.53%，满足触发条件
+            tracker.crossed_level = 9.5
+
+        # 3. 构造 BUY 信号（模拟 check_grid_signals 生成的结果）
+        signal = {
+            'stock_code': stock_code,
+            'signal_type': 'BUY',
+            'grid_level': 9.5,
+            'trigger_price': 9.45,
+            'session_id': session_id,
+            'timestamp': datetime.now().isoformat(),
+            'valley_price': 9.4,
+            'callback_ratio': 0.005,
+            'strategy': 'grid',
+        }
+
+        # 4. 让 max_investment 耗尽，使买入必然失败
+        with self.grid_manager.lock:
+            session.current_investment = session.max_investment  # 已耗尽
+
+        # 5. 执行交易（应返回 False）
+        result = self.grid_manager.execute_grid_trade(signal)
+        self.assertFalse(result, "max_investment 耗尽时应返回 False")
+
+        # 6. 验证追踪器 waiting_callback 被重置为 False（P2-1 修复验证）
+        with self.grid_manager.lock:
+            tracker = self.grid_manager.trackers[session_id]
+            self.assertFalse(tracker.waiting_callback,
+                             "P2-1修复验证：买入失败后 tracker.waiting_callback 应被重置为 False，"
+                             "防止每 3 秒重新生成相同 BUY 信号的无限重试循环")
+            self.assertIsNone(tracker.crossed_level,
+                              "P2-1修复验证：买入失败后 tracker.crossed_level 应被清空")
+
+    def test_P2_1_tracker_reset_on_real_buy_failure(self):
+        """
+        P2-1验证：实盘买入接口返回 None 时，追踪器同样被重置
+
+        场景：buy_stock 返回 None（例如 QMT 未连接或下单被拒绝）
+        """
+        stock_code = "600512.SH"
+
+        session_config = {
+            'center_price': 10.0,
+            'price_interval': 0.05,
+            'max_investment': 10000,
+            'callback_ratio': 0.005,
+            'duration_days': 7,
+        }
+        session = self.grid_manager.start_grid_session(stock_code, session_config)
+        session_id = session.id
+
+        # 设置追踪器为等待回调状态
+        with self.grid_manager.lock:
+            tracker = self.grid_manager.trackers[session_id]
+            tracker.waiting_callback = True
+            tracker.direction = 'falling'
+            tracker.valley_price = 9.4
+            tracker.last_price = 9.45
+            tracker.crossed_level = 9.5
+
+        signal = {
+            'stock_code': stock_code,
+            'signal_type': 'BUY',
+            'grid_level': 9.5,
+            'trigger_price': 9.45,
+            'session_id': session_id,
+            'timestamp': datetime.now().isoformat(),
+            'valley_price': 9.4,
+            'callback_ratio': 0.005,
+            'strategy': 'grid',
+        }
+
+        # 模拟实盘模式，buy_stock 返回 None（下单失败）
+        with patch.object(config, 'ENABLE_SIMULATION_MODE', False):
+            self.mock_executor.buy_stock = Mock(return_value=None)
+            result = self.grid_manager.execute_grid_trade(signal)
+
+        self.assertFalse(result, "buy_stock 返回 None 时应返回 False")
+
+        # 验证追踪器已重置
+        with self.grid_manager.lock:
+            tracker = self.grid_manager.trackers[session_id]
+            self.assertFalse(tracker.waiting_callback,
+                             "P2-1修复验证：实盘买入失败后 tracker.waiting_callback 应被重置为 False")
+
+    def test_P2_2_buy_cooldown_prevents_rapid_cascade(self):
+        """
+        P2-2验证：GRID_BUY_COOLDOWN 阻止短时间内连续买入
+
+        场景：模拟 9:25 开盘，价格连续跌穿档位，验证冷却期内不再买入
+        """
+        stock_code = "600513.SH"
+
+        session_config = {
+            'center_price': 10.0,
+            'price_interval': 0.05,
+            'max_investment': 50000,
+            'callback_ratio': 0.005,
+            'duration_days': 7,
+        }
+        session = self.grid_manager.start_grid_session(stock_code, session_config)
+        session_id = session.id
+
+        # 构造一个有效的 BUY 信号
+        signal = {
+            'stock_code': stock_code,
+            'signal_type': 'BUY',
+            'grid_level': 9.5,
+            'trigger_price': 9.45,
+            'session_id': session_id,
+            'timestamp': datetime.now().isoformat(),
+            'valley_price': 9.4,
+            'callback_ratio': 0.005,
+            'strategy': 'grid',
+        }
+
+        # 开启 60 秒买入冷却
+        with patch.object(config, 'GRID_BUY_COOLDOWN', 60):
+            with patch.object(config, 'ENABLE_SIMULATION_MODE', True):
+                # 第一次买入：应成功
+                result1 = self.grid_manager.execute_grid_trade(signal)
+                self.assertTrue(result1, "第一次买入应成功")
+
+                # 第二次立即尝试（冷却期内）：应被阻止
+                # 更新 signal 的价格信息，模拟新的档位触发
+                signal2 = dict(signal)
+                signal2['trigger_price'] = 8.98
+                signal2['valley_price'] = 8.90
+                signal2['grid_level'] = session.current_center_price * (1 - session.price_interval)
+
+                result2 = self.grid_manager.execute_grid_trade(signal2)
+                self.assertFalse(result2,
+                                 "P2-2修复验证：GRID_BUY_COOLDOWN 期间内，第二次买入应被阻止")
+
+    def test_P2_3_tracker_not_reset_on_success(self):
+        """
+        P2-3回归验证：买入成功时追踪器由 _rebuild_grid 正确重置（而非本次修复重置）
+
+        确保修复 P2-1 不影响成功路径的追踪器管理。
+        """
+        stock_code = "600514.SH"
+
+        session_config = {
+            'center_price': 10.0,
+            'price_interval': 0.05,
+            'max_investment': 20000,
+            'callback_ratio': 0.005,
+            'duration_days': 7,
+        }
+        session = self.grid_manager.start_grid_session(stock_code, session_config)
+        session_id = session.id
+
+        with self.grid_manager.lock:
+            tracker = self.grid_manager.trackers[session_id]
+            tracker.waiting_callback = True
+            tracker.direction = 'falling'
+            tracker.valley_price = 9.4
+            tracker.last_price = 9.45
+            tracker.crossed_level = 9.5
+
+        signal = {
+            'stock_code': stock_code,
+            'signal_type': 'BUY',
+            'grid_level': 9.5,
+            'trigger_price': 9.45,
+            'session_id': session_id,
+            'timestamp': datetime.now().isoformat(),
+            'valley_price': 9.4,
+            'callback_ratio': 0.005,
+            'strategy': 'grid',
+        }
+
+        with patch.object(config, 'ENABLE_SIMULATION_MODE', True):
+            result = self.grid_manager.execute_grid_trade(signal)
+
+        self.assertTrue(result, "模拟买入应成功")
+
+        # 成功后，_rebuild_grid 应将中心价更新为 trigger_price
+        with self.grid_manager.lock:
+            self.assertAlmostEqual(session.current_center_price, 9.45, places=2,
+                                   msg="买入成功后，current_center_price 应更新为 trigger_price")
+            tracker = self.grid_manager.trackers[session_id]
+            # _rebuild_grid 调用 tracker.reset() 后 waiting_callback=False
+            self.assertFalse(tracker.waiting_callback,
+                             "买入成功后，_rebuild_grid 应将 waiting_callback 重置为 False")
 
 
 if __name__ == '__main__':

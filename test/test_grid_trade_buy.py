@@ -274,7 +274,15 @@ class TestGridTradeBuy(unittest.TestCase):
         self.executor.buy_stock.assert_called_once()
         call_args = self.executor.buy_stock.call_args
         self.assertEqual(call_args[1]['stock_code'], '000001.SZ')
-        self.assertAlmostEqual(call_args[1]['amount'], 2000.0, places=2)
+        # V1修复后：实盘模式传 volume+price，不再传 amount（避免executor用市价重算导致超买）
+        self.assertIn('volume', call_args[1], "实盘模式应传 volume 参数")
+        self.assertIn('price', call_args[1], "实盘模式应传 price 参数")
+        self.assertNotIn('amount', call_args[1], "实盘模式不应传 amount 参数（V1漏洞修复）")
+        expected_volume = int(10000 * 0.2 / 10.0 / 100) * 100  # = 200
+        self.assertEqual(call_args[1]['volume'], expected_volume,
+                         f"实盘买入股数应为 {expected_volume}")
+        self.assertAlmostEqual(call_args[1]['price'], 10.0, places=4,
+                               msg="实盘买入价格应等于 trigger_price")
         self.assertEqual(call_args[1]['strategy'], config.GRID_STRATEGY_NAME)
 
         # 验证trade_id来自实盘

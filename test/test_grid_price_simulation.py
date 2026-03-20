@@ -165,21 +165,33 @@ class MockTradingExecutor:
         self.position_manager = position_manager
         self._lock = threading.Lock()
 
-    def buy_stock(self, stock_code: str, amount: float, strategy: str) -> dict:
+    def buy_stock(self, stock_code: str, volume=None, price=None, amount=None, strategy: str = "grid") -> dict:
         """
-        模拟买入执行
+        模拟买入执行（支持V1修复后的volume+price调用方式）
         返回格式: dict，与真实TradingExecutor接口兼容（grid_trading_manager调用 result.get('order_id')）
         """
-        pos = self.position_manager.get_position(stock_code)
-        price = pos['current_price'] if pos else INITIAL_PRICE
-        volume = int(amount / price / 100) * 100
+        # V1修复后：优先使用 volume + price 参数
+        if volume is not None and price is not None:
+            # 使用传入的 volume 和 price
+            actual_volume = volume
+            actual_price = price
+            actual_amount = actual_volume * actual_price
+        elif amount is not None:
+            # 兼容旧的 amount 方式
+            pos = self.position_manager.get_position(stock_code)
+            actual_price = pos['current_price'] if pos else INITIAL_PRICE
+            actual_volume = int(amount / actual_price / 100) * 100
+            actual_amount = actual_volume * actual_price
+        else:
+            logger.error(f"[MOCK-BUY] buy_stock 缺少必要参数")
+            return None
 
         trade = MockTrade(
             stock_code=stock_code,
             trade_type='BUY',
-            amount=amount,
-            volume=volume,
-            price=price,
+            amount=actual_amount,
+            volume=actual_volume,
+            price=actual_price,
             strategy=strategy
         )
 
@@ -187,20 +199,22 @@ class MockTradingExecutor:
             self.trades.append(trade)
 
         # 更新持仓
-        if pos and volume > 0:
-            new_volume = pos['volume'] + volume
-            self.position_manager.set_volume(stock_code, new_volume)
+        if actual_volume > 0:
+            pos = self.position_manager.get_position(stock_code)
+            if pos:
+                new_volume = pos['volume'] + actual_volume
+                self.position_manager.set_volume(stock_code, new_volume)
 
-        logger.info(f"[MOCK-BUY] {stock_code} amount={amount:.2f} vol={volume} price={price:.2f}")
+        logger.info(f"[MOCK-BUY] {stock_code} vol={actual_volume} price={actual_price:.2f} amount={actual_amount:.2f}")
 
         # 返回dict格式（grid_trading_manager期望 result.get('order_id')）
         return {
             'order_id': trade.order_id,
             'stock_code': stock_code,
             'trade_type': 'BUY',
-            'amount': amount,
-            'volume': volume,
-            'price': price,
+            'amount': actual_amount,
+            'volume': actual_volume,
+            'price': actual_price,
             'strategy': strategy,
             'timestamp': trade.timestamp
         }
