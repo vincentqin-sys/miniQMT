@@ -412,6 +412,56 @@ class TestGridTradeSell(unittest.TestCase):
 
         print(f"[OK] 实盘卖出失败, 正确回滚状态")
 
+    # ==================== RISK-2：DB写入失败内存回滚测试（新增）====================
+    def test_db_write_failure_rollback_sell(self):
+        """RISK-2：DB写入失败时卖出内存状态回滚测试
+
+        验证：record_grid_trade 抛出异常后，session 的 sell_count/current_investment 等
+        统计字段应被完整回滚到执行前的状态，不留脏数据（尤其是资金回收不能虚增）。
+        """
+        print("\n========== RISK-2: DB写入失败内存回滚（卖出）==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+
+        session = self._create_test_session(
+            position_ratio=0.25,
+            current_investment=5000.0
+        )
+        position = self._mock_position(volume=1000, cost_price=10.0)
+        self.position_manager.get_position.return_value = position
+
+        signal = {'trigger_price': 10.5, 'grid_level': 'upper',
+                  'peak_price': 10.6, 'callback_ratio': 0.005}
+
+        # 记录执行前状态
+        before_trade_count = session.trade_count
+        before_sell_count = session.sell_count
+        before_total_sell = session.total_sell_amount
+        before_investment = session.current_investment
+
+        # Mock DB 的 record_grid_trade 抛出异常
+        import sqlite3
+        from unittest.mock import patch
+        with patch.object(self.manager.db, 'record_grid_trade',
+                          side_effect=sqlite3.OperationalError("database is locked")):
+            result = self.manager._execute_grid_sell(session, signal)
+
+        # 验证：返回 False
+        self.assertFalse(result, "DB写入失败应返回 False")
+
+        # 验证：内存状态完整回滚（卖出后资金回收不应生效）
+        self.assertEqual(session.trade_count, before_trade_count,
+                         "DB失败后 trade_count 应回滚")
+        self.assertEqual(session.sell_count, before_sell_count,
+                         "DB失败后 sell_count 应回滚")
+        self.assertAlmostEqual(session.total_sell_amount, before_total_sell, places=4,
+                               msg="DB失败后 total_sell_amount 应回滚")
+        self.assertAlmostEqual(session.current_investment, before_investment, places=4,
+                               msg="DB失败后 current_investment 应回滚（资金不应虚假回收）")
+
+        print(f"[OK] DB写入失败后内存状态完整回滚: sell_count={session.sell_count}, "
+              f"investment={session.current_investment:.2f}")
+
 
 def run_tests():
     """运行所有测试"""

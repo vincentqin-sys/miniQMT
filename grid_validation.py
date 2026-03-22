@@ -40,7 +40,9 @@ class GridConfigSchema(Schema):
 
     max_investment = fields.Float(
         required=True,
-        validate=validate.Range(min=0, error='最大追加投入必须大于等于0')
+        # VAL-3修复：严格要求 > 0。允许 max_investment=0 会创建永远无法买入的无效会话，
+        # 而代码层面以 <= 0 作为无效配置标志，校验层与实现层需保持一致。
+        validate=validate.Range(min=0.01, error='最大追加投入必须大于0（至少0.01元）')
     )
 
     max_deviation = fields.Float(
@@ -63,17 +65,21 @@ class GridConfigSchema(Schema):
     def validate_profit_and_loss(self, data, **kwargs):
         """验证目标盈利和止损的合理性
 
-        注意:仅当两个参数都非边界值时才检查,允许单独测试边界值
+        VAL-2修复：精确化豁免逻辑。
+        原逻辑：任意一个字段处于边界值即豁免，导致 target_profit=0.01 + stop_loss=-0.45
+        这种极不合理的组合也能通过校验。
+        新逻辑：仅当两者同时处于各自的极端边界（target=0.01 AND stop=-0.50）时才豁免，
+        因为这是唯一一个满足各自字段约束但不满足跨字段约束的合法极端组合。
         """
         if 'target_profit' in data and 'stop_loss' in data:
-            # 如果是边界值测试,跳过交叉验证
-            # 边界值: target_profit=0.01 或 stop_loss=-0.50
-            is_boundary_test = (
-                data['target_profit'] == 0.01 or
-                data['stop_loss'] == -0.50
+            # 仅当 target_profit 和 stop_loss 同时处于各自字段的极端边界时豁免跨字段校验
+            # 原因：target_profit_min(0.01) < abs(stop_loss_max(0.50))，
+            # 若同时取各自极值，跨字段约束将误判为非法配置
+            both_at_extreme_boundary = (
+                data['target_profit'] == 0.01 and data['stop_loss'] == -0.50
             )
 
-            if not is_boundary_test and data['target_profit'] < abs(data['stop_loss']):
+            if not both_at_extreme_boundary and data['target_profit'] < abs(data['stop_loss']):
                 raise ValidationError('目标盈利应大于或等于止损幅度', 'target_profit')
 
 

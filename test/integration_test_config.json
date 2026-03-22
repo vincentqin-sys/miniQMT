@@ -74,7 +74,8 @@
       "name": "网格综合测试",
       "description": "网格交易综合功能测试",
       "modules": [
-        "test.test_grid_comprehensive_ultraqa"
+        "test.test_grid_comprehensive_ultraqa",
+        "test.test_grid_scenario_market_behavior"
       ],
       "priority": "high"
     },

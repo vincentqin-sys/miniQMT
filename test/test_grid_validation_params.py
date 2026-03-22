@@ -133,7 +133,9 @@ class TestGridValidationParams(unittest.TestCase):
         self.assertTrue(is_valid)
 
     def test_max_investment_validation(self):
-        """测试最大投入验证 (>=0)"""
+        """测试最大投入验证 (>0)
+        VAL-3修复：max_investment 必须严格大于0，等于0的配置永远无法买入属于无效配置
+        """
         config = self.valid_config.copy()
 
         # 负值不允许
@@ -141,10 +143,10 @@ class TestGridValidationParams(unittest.TestCase):
         is_valid, errors = validate_grid_config(config)
         self.assertFalse(is_valid)
 
-        # 零值允许
+        # 零值不允许（VAL-3修复：与代码层 <= 0 判断对齐，零值会创建永久无法买入的会话）
         config['max_investment'] = 0
-        is_valid, _ = validate_grid_config(config)
-        self.assertTrue(is_valid)
+        is_valid, errors = validate_grid_config(config)
+        self.assertFalse(is_valid, "max_investment=0 应被拒绝（VAL-3：必须严格大于0）")
 
         # 正值允许
         config['max_investment'] = 50000
@@ -175,7 +177,10 @@ class TestGridValidationParams(unittest.TestCase):
         self.assertTrue(is_valid)
 
     def test_target_profit_range(self):
-        """测试目标盈利验证 (1%-100%)"""
+        """测试目标盈利验证 (1%-100%)
+        VAL-2修复：测试 target_profit 最小边界时，需同时满足交叉验证约束，
+        否则仅当 target_profit=0.01 AND stop_loss=-0.50 同时处于各自边界才豁免
+        """
         config = self.valid_config.copy()
 
         # 小于最小值
@@ -188,17 +193,23 @@ class TestGridValidationParams(unittest.TestCase):
         is_valid, errors = validate_grid_config(config)
         self.assertFalse(is_valid)
 
-        # 边界值
+        # 边界值（最小值）：同时设置合理的止损使交叉验证通过（target >= |stop_loss|）
         config['target_profit'] = 0.01
+        config['stop_loss'] = -0.01  # 0.01 >= 0.01，满足交叉验证
         is_valid, _ = validate_grid_config(config)
-        self.assertTrue(is_valid)
+        self.assertTrue(is_valid, "target_profit=0.01 且 stop_loss=-0.01 应通过验证")
 
+        # 最大值（无约束）
         config['target_profit'] = 1.0
+        config['stop_loss'] = -0.10  # 恢复正常止损
         is_valid, _ = validate_grid_config(config)
         self.assertTrue(is_valid)
 
     def test_stop_loss_range(self):
-        """测试止损比例验证 (-50%-0%)"""
+        """测试止损比例验证 (-50%-0%)
+        VAL-2修复：测试 stop_loss 最大幅度边界时，需同时满足交叉验证约束，
+        否则仅当 target_profit=0.01 AND stop_loss=-0.50 同时处于各自边界才豁免
+        """
         config = self.valid_config.copy()
 
         # 小于最小值
@@ -211,14 +222,17 @@ class TestGridValidationParams(unittest.TestCase):
         is_valid, errors = validate_grid_config(config)
         self.assertFalse(is_valid)
 
-        # 边界值
+        # 边界值（最大幅度）：同时设置足够大的目标盈利使交叉验证通过（target >= |stop_loss|）
         config['stop_loss'] = -0.50
+        config['target_profit'] = 0.50  # 0.50 >= 0.50，满足交叉验证
         is_valid, _ = validate_grid_config(config)
-        self.assertTrue(is_valid)
+        self.assertTrue(is_valid, "stop_loss=-0.50 且 target_profit=0.50 应通过验证")
 
+        # 零值（极端保守，止盈即任何净亏损）：允许但风险极高
         config['stop_loss'] = 0
+        config['target_profit'] = 0.10  # 恢复正常目标盈利
         is_valid, _ = validate_grid_config(config)
-        self.assertTrue(is_valid)
+        self.assertTrue(is_valid, "stop_loss=0 应通过验证（允许但极端保守）")
 
     def test_duration_days_range(self):
         """测试运行时长验证 (1-365天)"""

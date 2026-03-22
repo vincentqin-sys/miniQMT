@@ -346,7 +346,105 @@ class TestGridExitDeviation(unittest.TestCase):
         )
         self._check_exit_and_record('微小超限(15.01%)', session, expected_exit=True)
 
+    # ==================== TEST-5：market_deviation 独立测试（新增）====================
+    def test_9_market_deviation_triggers_exit(self):
+        """测试9: market_deviation（市价偏离）独立触发退出
+
+        TEST-5修复：原有测试全部通过修改 current_center_price 触发 drift_deviation，
+        本测试保持 current_center_price == center_price（无漂移），通过传入偏离当前中心价
+        超过 max_deviation 的市价来独立验证 market_deviation 保护机制。
+        """
+        # center_price == current_center_price，drift_deviation = 0%
+        session = self._create_test_session(
+            center_price=10.00,
+            current_center_price=10.00,
+            max_deviation=0.15
+        )
+        # 市价偏离 current_center_price 15.1%（向上），超出限制
+        market_price = 10.00 * (1 + 0.151)  # 11.51
+        exit_reason = self.grid_manager._check_exit_conditions(session, market_price)
+
+        passed = exit_reason == 'deviation'
+        drift = session.get_deviation_ratio()
+        market_dev = abs(market_price - session.current_center_price) / session.current_center_price
+        result_msg = (f"预期: deviation（market_deviation触发）, 实际: {exit_reason} | "
+                      f"drift={drift*100:.2f}%, market={market_dev*100:.2f}%")
+
+        self.test_results.append({
+            'test_name': 'market_deviation独立触发(+15.1%市价偏离)',
+            'passed': passed,
+            'center_price': session.center_price,
+            'current_center_price': session.current_center_price,
+            'market_price': market_price,
+            'drift_deviation': f"{drift*100:.2f}%",
+            'market_deviation': f"{market_dev*100:.2f}%",
+            'exit_reason': exit_reason,
+            'result': result_msg
+        })
+
+        print(f"\n测试9 market_deviation独立触发: {'[OK] 通过' if passed else '[FAIL] 失败'}")
+        print(f"  漂移偏离: {drift*100:.2f}%, 市价偏离: {market_dev*100:.2f}%")
+        print(f"  {result_msg}")
+        self.assertTrue(passed, result_msg)
+
+    def test_10_market_deviation_below_limit(self):
+        """测试10: market_deviation 未超限（14.9%）时不触发退出"""
+        session = self._create_test_session(
+            center_price=10.00,
+            current_center_price=10.00,
+            max_deviation=0.15
+        )
+        # 市价偏离 14.9%，未超限
+        market_price = 10.00 * (1 + 0.149)  # 11.49
+        exit_reason = self.grid_manager._check_exit_conditions(session, market_price)
+
+        passed = exit_reason is None
+        market_dev = abs(market_price - session.current_center_price) / session.current_center_price
+        result_msg = f"预期: None（未超限）, 实际: {exit_reason} | market_deviation={market_dev*100:.2f}%"
+
+        self.test_results.append({
+            'test_name': 'market_deviation未超限(14.9%)',
+            'passed': passed,
+            'market_deviation': f"{market_dev*100:.2f}%",
+            'exit_reason': exit_reason,
+            'result': result_msg
+        })
+
+        print(f"\n测试10 market_deviation未超限: {'[OK] 通过' if passed else '[FAIL] 失败'}")
+        print(f"  市价偏离: {market_dev*100:.2f}%")
+        print(f"  {result_msg}")
+        self.assertTrue(passed, result_msg)
+
+    def test_11_market_deviation_downward(self):
+        """测试11: market_deviation 向下偏离超限触发退出"""
+        session = self._create_test_session(
+            center_price=10.00,
+            current_center_price=10.00,
+            max_deviation=0.15
+        )
+        # 市价向下偏离 15.1%，超出限制
+        market_price = 10.00 * (1 - 0.151)  # 8.49
+        exit_reason = self.grid_manager._check_exit_conditions(session, market_price)
+
+        passed = exit_reason == 'deviation'
+        market_dev = abs(market_price - session.current_center_price) / session.current_center_price
+        result_msg = f"预期: deviation（下行market_deviation超限）, 实际: {exit_reason} | market_deviation={market_dev*100:.2f}%"
+
+        self.test_results.append({
+            'test_name': 'market_deviation向下超限(-15.1%)',
+            'passed': passed,
+            'market_deviation': f"-{market_dev*100:.2f}%",
+            'exit_reason': exit_reason,
+            'result': result_msg
+        })
+
+        print(f"\n测试11 market_deviation向下超限: {'[OK] 通过' if passed else '[FAIL] 失败'}")
+        print(f"  市价偏离: -{market_dev*100:.2f}%")
+        print(f"  {result_msg}")
+        self.assertTrue(passed, result_msg)
+
 
 if __name__ == '__main__':
     # 运行测试
     unittest.main(verbosity=2)
+

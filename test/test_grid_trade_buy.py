@@ -340,6 +340,99 @@ class TestGridTradeBuy(unittest.TestCase):
         self.assertFalse(result2, "max_investment<0应拒绝买入")
         print(f"[OK] max_investment=-1000, 正确拒绝")
 
+    # ==================== TEST-6：GRID_BUY_COOLDOWN 测试（新增）====================
+    def test_buy_cooldown_mechanism(self):
+        """TEST-6：GRID_BUY_COOLDOWN 买入冷却机制测试
+
+        验证：冷却期内拒绝买入；冷却到期后允许买入；last_buy_times 正确记录
+        """
+        print("\n========== TEST-6: GRID_BUY_COOLDOWN买入冷却机制 ==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+        original_cooldown = getattr(config, 'GRID_BUY_COOLDOWN', 0)
+
+        try:
+            # 设置极短冷却时间（2秒）便于测试
+            config.GRID_BUY_COOLDOWN = 2
+
+            session = self._create_test_session(max_investment=10000, current_investment=0)
+            signal = {'trigger_price': 10.0, 'grid_level': 'lower',
+                      'valley_price': 9.5, 'callback_ratio': 0.005}
+
+            # 第1次买入：无冷却记录，应成功
+            result1 = self.manager._execute_grid_buy(session, signal)
+            self.assertTrue(result1, "第1次买入应成功（无冷却记录）")
+            self.assertEqual(session.buy_count, 1)
+            print(f"[OK] 第1次买入成功, buy_count=1")
+
+            # 立刻第2次买入：冷却期内，应被拒绝
+            result2 = self.manager._execute_grid_buy(session, signal)
+            self.assertFalse(result2, "冷却期内第2次买入应被拒绝")
+            self.assertEqual(session.buy_count, 1, "冷却期内buy_count不应增加")
+            print(f"[OK] 冷却期内第2次买入被拒绝")
+
+            # 等待冷却到期（3秒 > 2秒冷却）
+            import time
+            time.sleep(3)
+
+            # 第3次买入：冷却已到期，应成功
+            result3 = self.manager._execute_grid_buy(session, signal)
+            self.assertTrue(result3, "冷却到期后第3次买入应成功")
+            self.assertEqual(session.buy_count, 2, "冷却到期后buy_count应增加到2")
+            print(f"[OK] 冷却到期后第3次买入成功, buy_count=2")
+
+            # 验证 last_buy_times 已记录
+            self.assertIn(session.id, self.manager.last_buy_times,
+                          "last_buy_times 应记录 session.id")
+            print(f"[OK] last_buy_times 正确记录 session_id={session.id}")
+
+        finally:
+            config.GRID_BUY_COOLDOWN = original_cooldown
+
+    # ==================== RISK-1：DB写入失败内存回滚测试（新增）====================
+    def test_db_write_failure_rollback_buy(self):
+        """RISK-1：DB写入失败时买入内存状态回滚测试
+
+        验证：record_grid_trade 抛出异常后，session 的 buy_count/current_investment 等
+        统计字段应被完整回滚到执行前的状态，不留脏数据。
+        """
+        print("\n========== RISK-1: DB写入失败内存回滚（买入）==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+
+        session = self._create_test_session(max_investment=10000, current_investment=0)
+        signal = {'trigger_price': 10.0, 'grid_level': 'lower',
+                  'valley_price': 9.5, 'callback_ratio': 0.005}
+
+        # 记录执行前状态
+        before_trade_count = session.trade_count
+        before_buy_count = session.buy_count
+        before_total_buy = session.total_buy_amount
+        before_investment = session.current_investment
+
+        # Mock DB 的 record_grid_trade 抛出异常（模拟磁盘满/锁超时等场景）
+        import sqlite3
+        from unittest.mock import patch
+        with patch.object(self.manager.db, 'record_grid_trade',
+                          side_effect=sqlite3.OperationalError("disk I/O error")):
+            result = self.manager._execute_grid_buy(session, signal)
+
+        # 验证：返回 False
+        self.assertFalse(result, "DB写入失败应返回 False")
+
+        # 验证：内存状态完整回滚
+        self.assertEqual(session.trade_count, before_trade_count,
+                         "DB失败后 trade_count 应回滚")
+        self.assertEqual(session.buy_count, before_buy_count,
+                         "DB失败后 buy_count 应回滚")
+        self.assertAlmostEqual(session.total_buy_amount, before_total_buy, places=4,
+                               msg="DB失败后 total_buy_amount 应回滚")
+        self.assertAlmostEqual(session.current_investment, before_investment, places=4,
+                               msg="DB失败后 current_investment 应回滚")
+
+        print(f"[OK] DB写入失败后内存状态完整回滚: buy_count={session.buy_count}, "
+              f"investment={session.current_investment:.2f}")
+
 
 def run_tests():
     """运行所有测试"""

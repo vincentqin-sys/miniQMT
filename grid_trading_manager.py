@@ -823,7 +823,12 @@ class GridTradingManager:
             exit_reason = self._check_exit_conditions(session, current_price)
             if exit_reason:
                 logger.info(f"[GRID] check_grid_signals: {stock_code} 触发退出条件 reason={exit_reason}")
-                self.stop_grid_session(session.id, exit_reason)
+                # RISK-4修复：捕获 ValueError，防止并发场景下（如 Web API 同时手动停止）
+                # 第二次调用 stop_grid_session 因会话已消失而抛出未处理异常，导致持仓监控线程崩溃
+                try:
+                    self.stop_grid_session(session.id, exit_reason)
+                except ValueError as e:
+                    logger.warning(f"[GRID] check_grid_signals: 停止会话时会话已不存在（可能已被并发停止）: {e}")
                 return None
 
             # 2. 更新价格追踪器
@@ -1159,16 +1164,26 @@ class GridTradingManager:
             'grid_center_after': trigger_price
         }
         logger.debug(f"[GRID] _execute_grid_buy: 记录交易 trade_data={trade_data}")
-        self.db.record_grid_trade(trade_data)
+        # RISK-1修复：DB写入失败时回滚内存状态，保持内存与DB一致
+        # old_trade_count/old_buy_count/old_total_buy/old_investment 已在第4步保存
+        try:
+            self.db.record_grid_trade(trade_data)
 
-        # 6. 更新数据库会话
-        logger.debug(f"[GRID] _execute_grid_buy: 更新数据库会话")
-        self.db.update_grid_session(session.id, {
-            'trade_count': session.trade_count,
-            'buy_count': session.buy_count,
-            'total_buy_amount': session.total_buy_amount,
-            'current_investment': session.current_investment
-        })
+            # 6. 更新数据库会话
+            logger.debug(f"[GRID] _execute_grid_buy: 更新数据库会话")
+            self.db.update_grid_session(session.id, {
+                'trade_count': session.trade_count,
+                'buy_count': session.buy_count,
+                'total_buy_amount': session.total_buy_amount,
+                'current_investment': session.current_investment
+            })
+        except Exception as db_err:
+            logger.error(f"[GRID] _execute_grid_buy: DB写入失败，回滚内存统计以保持数据一致: {db_err}")
+            session.trade_count = old_trade_count
+            session.buy_count = old_buy_count
+            session.total_buy_amount = old_total_buy
+            session.current_investment = old_investment
+            return False
 
         # 7. 重建网格
         logger.debug(f"[GRID] _execute_grid_buy: 重建网格")
@@ -1203,7 +1218,10 @@ class GridTradingManager:
             return False
 
         # 2. 计算卖出数量
-        sell_volume = int(current_volume * session.position_ratio / 100) * 100
+        # BUG-1修复：改用 (int(x) // 100) * 100 形式，语义更清晰：
+        # 先计算应卖股数（浮点转整数截断），再向下取整到100的倍数
+        # 与买入逻辑的整百方式统一，两者数值等价但表达一致
+        sell_volume = (int(current_volume * session.position_ratio) // 100) * 100
         logger.debug(f"[GRID] _execute_grid_sell: 计算卖出数量 position_ratio={session.position_ratio*100:.1f}%, 初步sell_volume={sell_volume}")
 
         if sell_volume == 0:
@@ -1274,16 +1292,26 @@ class GridTradingManager:
             'grid_center_after': trigger_price
         }
         logger.debug(f"[GRID] _execute_grid_sell: 记录交易 trade_data={trade_data}")
-        self.db.record_grid_trade(trade_data)
+        # RISK-2修复：DB写入失败时回滚内存状态，防止内存中资金已回收但DB无记录
+        # old_trade_count/old_sell_count/old_total_sell/old_investment 已在第4步保存
+        try:
+            self.db.record_grid_trade(trade_data)
 
-        # 6. 更新数据库会话
-        logger.debug(f"[GRID] _execute_grid_sell: 更新数据库会话")
-        self.db.update_grid_session(session.id, {
-            'trade_count': session.trade_count,
-            'sell_count': session.sell_count,
-            'total_sell_amount': session.total_sell_amount,
-            'current_investment': session.current_investment
-        })
+            # 6. 更新数据库会话
+            logger.debug(f"[GRID] _execute_grid_sell: 更新数据库会话")
+            self.db.update_grid_session(session.id, {
+                'trade_count': session.trade_count,
+                'sell_count': session.sell_count,
+                'total_sell_amount': session.total_sell_amount,
+                'current_investment': session.current_investment
+            })
+        except Exception as db_err:
+            logger.error(f"[GRID] _execute_grid_sell: DB写入失败，回滚内存统计以保持数据一致: {db_err}")
+            session.trade_count = old_trade_count
+            session.sell_count = old_sell_count
+            session.total_sell_amount = old_total_sell
+            session.current_investment = old_investment
+            return False
 
         # 7. 重建网格
         logger.debug(f"[GRID] _execute_grid_sell: 重建网格")

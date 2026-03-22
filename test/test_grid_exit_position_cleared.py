@@ -306,11 +306,12 @@ class TestGridExitPositionCleared(unittest.TestCase):
         })
 
         # 检查退出条件: 偏离度 > 盈亏 > 时间 > 持仓清空
-        # 所以盈利触发应该优先
+        # TEST-1修复：盈亏检测（第2步）优先于持仓清空（第4步），断言收紧为精确值
+        # 参考 test_grid_exit_integration.py::test_2_profit_time_position 的设计验证
         exit_reason = self.grid_manager._check_exit_conditions(session, 10.00)
 
-        passed = exit_reason in ['target_profit', 'position_cleared']
-        result_msg = f"实际退出原因: {exit_reason}"
+        passed = exit_reason == 'target_profit'
+        result_msg = f"预期: target_profit（盈亏优先于持仓清空）, 实际: {exit_reason}"
 
         self.test_results.append({
             'test_name': '持仓清空+盈利10%',
