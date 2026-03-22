@@ -240,7 +240,7 @@ STOP_LOSS_RATIO = -0.075  # 固定止损比例：成本价下跌7.5%触发止损
 ENABLE_DYNAMIC_STOP_PROFIT = True  # 启用动态止盈功能
 INITIAL_TAKE_PROFIT_RATIO = 0.06   # 首次止盈触发阈值：盈利6%时触发
 INITIAL_TAKE_PROFIT_PULLBACK_RATIO = 0.005  # 回撤比例：0.5%（可配置）
-INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE = 0.6  # 首次止盈卖出比例：50%（半仓）
+INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE = 0.6  # 首次止盈卖出比例
 
 # 🔑 委托单超时管理配置
 ENABLE_PENDING_ORDER_AUTO_CANCEL = True  # 是否启用委托单超时自动撤单

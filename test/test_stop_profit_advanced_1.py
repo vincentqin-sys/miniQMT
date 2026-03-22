@@ -1,26 +1,22 @@
 """
 动态止盈止损高级测试 - 突破和回撤机制
-测试两阶段止盈逻辑：阶段1突破监控 → 阶段2回撤触发
+测试两阶段止盈逻辑：阶段1突破监控 -> 阶段2回撤触发
 
 测试用例：
-- test_11_profit_breakout_mechanism: 测试突破阈值后的监控和最高价跟踪
-- test_12_pullback_take_profit_trigger: 测试回撤触发首次止盈（take_profit_half）
-
-作者: Ultrapilot Worker 1
-创建时间: 2026-02-15
+- test_11_profit_breakout_mechanism: 验证首次突破阈值时只标记突破状态、不立即产生交易信号
+- test_12_pullback_take_profit_trigger: 验证突破后价格回撤达阈值时触发 take_profit_half 信号
 """
 
 import unittest
 import sys
 import os
-from unittest.mock import MagicMock, patch
 from datetime import datetime
 
-# 添加父目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from test.test_base import TestBase
+from position_manager import PositionManager
 from logger import get_logger
 
 logger = get_logger("test_stop_profit_advanced_1")
@@ -30,207 +26,170 @@ class TestStopProfitAdvanced1(TestBase):
     """测试两阶段止盈机制：突破监控和回撤触发"""
 
     def setUp(self):
-        """每个测试前的准备工作"""
         super().setUp()
-
-        # 创建测试数据库表结构
-        conn = self.create_test_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS positions (
-            stock_code TEXT PRIMARY KEY,
-            stock_name TEXT,
-            volume REAL,
-            available REAL,
-            cost_price REAL,
-            base_cost_price REAL,
-            current_price REAL,
-            market_value REAL,
-            profit_ratio REAL,
-            last_update TIMESTAMP,
-            open_date TIMESTAMP,
-            profit_triggered BOOLEAN DEFAULT FALSE,
-            highest_price REAL,
-            stop_loss_price REAL,
-            profit_breakout_triggered BOOLEAN DEFAULT FALSE,
-            breakout_highest_price REAL
-        )
-        ''')
-        conn.commit()
-        conn.close()
-
-        logger.info("测试环境初始化完成")
+        self.pm = PositionManager()
+        self.pm.stop_sync_thread()
+        self._ensure_memory_schema()
+        # 清理内存持仓，保证用例隔离
+        cursor = self.pm.memory_conn.cursor()
+        cursor.execute("DELETE FROM positions")
+        self.pm.memory_conn.commit()
+        logger.info(f"测试环境初始化完成: {self._testMethodName}")
 
     def tearDown(self):
-        """每个测试后的清理"""
-        super().tearDown()
+        try:
+            self.pm.stop_sync_thread()
+        finally:
+            super().tearDown()
+
+    def _ensure_memory_schema(self):
+        """确保内存 positions 表包含止盈突破相关字段"""
+        cursor = self.pm.memory_conn.cursor()
+        cursor.execute("PRAGMA table_info(positions)")
+        cols = {row[1] for row in cursor.fetchall()}
+        if "profit_breakout_triggered" not in cols:
+            cursor.execute(
+                "ALTER TABLE positions ADD COLUMN profit_breakout_triggered BOOLEAN DEFAULT FALSE"
+            )
+        if "breakout_highest_price" not in cols:
+            cursor.execute(
+                "ALTER TABLE positions ADD COLUMN breakout_highest_price REAL"
+            )
+        self.pm.memory_conn.commit()
+
+    def _insert_position(self, **kw):
+        """向内存持仓表插入测试数据"""
+        stock_code = kw.get("stock_code", "000001.SZ")
+        cost_price = kw.get("cost_price", 10.0)
+        cursor = self.pm.memory_conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO positions
+            (stock_code, volume, available, cost_price, current_price,
+             open_date, profit_triggered, highest_price, stop_loss_price,
+             profit_breakout_triggered, breakout_highest_price)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            stock_code,
+            kw.get("volume", 1000),
+            kw.get("available", kw.get("volume", 1000)),
+            cost_price,
+            kw.get("current_price", cost_price),
+            kw.get("open_date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            kw.get("profit_triggered", 0),
+            kw.get("highest_price", cost_price),
+            kw.get("stop_loss_price", cost_price * (1 + config.STOP_LOSS_RATIO)),
+            kw.get("profit_breakout_triggered", 0),
+            kw.get("breakout_highest_price", 0.0),
+        ))
+        self.pm.memory_conn.commit()
+        return stock_code
 
     def test_11_profit_breakout_mechanism(self):
         """
-        测试11：价格上涨和最高价跟踪
+        测试11：首次突破止盈阈值时，check_trading_signals 只标记突破状态，不立即产生交易信号
 
-        测试场景：
-        1. 初始持仓：1000股，成本价10.0元
-        2. 价格上涨至10.6元（达到6%盈利阈值）
-        3. 验证：价格更新正确，盈利比例达到阈值
-        4. 价格继续上涨至10.8元
-        5. 验证：最高价更新正确
+        验证点：
+        1. 信号返回 (None, None) —— 不立即下单
+        2. profit_breakout_triggered 被置为 True
+        3. breakout_highest_price 被记录为当前突破价格
         """
-        logger.info("=== 测试11：价格上涨和最高价跟踪 ===")
+        logger.info("=== 测试11：首次突破止盈阈值的突破标记验证 ===")
 
-        stock_code = "000001.SZ"
         cost_price = 10.0
-        initial_volume = 1000
+        # 达到 6% 盈利阈值：恰好触发突破标记逻辑
+        breakout_price = cost_price * (1 + config.INITIAL_TAKE_PROFIT_RATIO)  # 10.6
 
-        # 步骤1: 创建初始持仓
-        logger.info(f"步骤1: 创建初始持仓 - {stock_code}, 成本价: {cost_price}, 数量: {initial_volume}")
+        stock_code = self._insert_position(
+            cost_price=cost_price,
+            current_price=cost_price,
+            profit_triggered=0,
+            profit_breakout_triggered=0,
+            breakout_highest_price=0.0,
+        )
+        logger.info(f"持仓已插入: cost={cost_price}, breakout_price={breakout_price:.2f}")
 
-        conn = self.create_test_db_connection()
-        cursor = conn.cursor()
+        # 以突破价格调用信号检测
+        signal_type, signal_info = self.pm.check_trading_signals(
+            stock_code, current_price=breakout_price
+        )
 
-        cursor.execute("""
-            INSERT OR REPLACE INTO positions
-            (stock_code, volume, available, cost_price, current_price,
-             open_date, profit_triggered, highest_price, stop_loss_price)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (stock_code, initial_volume, initial_volume, cost_price, cost_price,
-              datetime.now().strftime("%Y-%m-%d"), 0, cost_price,
-              cost_price * (1 + config.STOP_LOSS_RATIO)))
-        conn.commit()
+        # 断言1: 不立即产生交易信号
+        self.assertIsNone(signal_type,
+                          "首次突破止盈阈值时应返回 None，不立即触发交易")
 
-        # 验证初始持仓
-        cursor.execute("SELECT volume FROM positions WHERE stock_code=?", (stock_code,))
-        row = cursor.fetchone()
-        self.assertIsNotNone(row, "初始持仓应存在")
-        self.assertEqual(row[0], initial_volume, "持仓数量应为1000")
-        logger.info(f"初始持仓验证通过: volume={row[0]}")
+        # 断言2: profit_breakout_triggered 已被置为 True
+        pos = self.pm.get_position(stock_code)
+        self.assertIsNotNone(pos, "内存持仓应存在")
+        self.assertEqual(int(pos.get('profit_breakout_triggered', 0)), 1,
+                         "突破后 profit_breakout_triggered 应置为 True")
 
-        # 步骤2: 价格上涨至10.6元（达到6%盈利阈值）
-        logger.info("步骤2: 价格上涨至10.6元（达到6%盈利阈值）")
+        # 断言3: breakout_highest_price 已被记录
+        self.assertAlmostEqual(float(pos.get('breakout_highest_price', 0)),
+                               breakout_price, places=2,
+                               msg="breakout_highest_price 应等于突破时的当前价格")
 
-        price_after_breakout = 10.6  # 6%盈利
-        profit_ratio_breakout = (price_after_breakout - cost_price) / cost_price
-
-        cursor.execute("""
-            UPDATE positions
-            SET current_price = ?, highest_price = ?
-            WHERE stock_code = ?
-        """, (price_after_breakout, price_after_breakout, stock_code))
-        conn.commit()
-
-        # 验证价格更新
-        cursor.execute("SELECT current_price, highest_price FROM positions WHERE stock_code=?", (stock_code,))
-        row = cursor.fetchone()
-        self.assertAlmostEqual(row[0], price_after_breakout, places=2, msg="当前价格应为10.6")
-        self.assertAlmostEqual(profit_ratio_breakout, config.INITIAL_TAKE_PROFIT_RATIO, places=4,
-                               msg="盈利比例应达到首次止盈阈值")
-
-        logger.info(f"价格更新验证通过: current_price={row[0]:.2f}, profit_ratio={profit_ratio_breakout:.2%}")
-
-        # 步骤3: 价格继续上涨至10.8元
-        logger.info("步骤3: 价格继续上涨至10.8元")
-
-        price_higher = 10.8
-        profit_ratio_higher = (price_higher - cost_price) / cost_price
-
-        cursor.execute("""
-            UPDATE positions
-            SET current_price = ?, highest_price = ?
-            WHERE stock_code = ?
-        """, (price_higher, price_higher, stock_code))
-        conn.commit()
-
-        # 验证最高价更新
-        cursor.execute("SELECT current_price, highest_price FROM positions WHERE stock_code=?", (stock_code,))
-        row = cursor.fetchone()
-        self.assertAlmostEqual(row[1], price_higher, places=2, msg="最高价应更新为10.8")
-        self.assertAlmostEqual(row[0], price_higher, places=2, msg="当前价应为10.8")
-
-        logger.info(f"最高价跟踪验证通过: highest_price={row[1]:.2f}, "
-                   f"current_price={row[0]:.2f}, profit_ratio={profit_ratio_higher:.2%}")
-
-        conn.close()
-        logger.info("=== 测试11完成：价格上涨和最高价跟踪功能正常 ===")
+        logger.info(f"断言通过: signal=None, "
+                    f"profit_breakout_triggered={pos.get('profit_breakout_triggered')}, "
+                    f"breakout_highest_price={pos.get('breakout_highest_price'):.2f}")
+        logger.info("=== 测试11完成：突破标记逻辑验证通过 ===")
 
     def test_12_pullback_take_profit_trigger(self):
         """
-        测试12：首次止盈触发验证
+        测试12：突破后价格回撤达阈值时触发 take_profit_half 信号
 
-        测试场景：
-        1. 初始持仓：1000股，成本价10.0元
-        2. 价格上涨至10.6元（达到6%盈利阈值）
-        3. 验证：应触发首次止盈，卖出60%持仓（600股）
+        场景：
+        - 已突破（profit_breakout_triggered=1，突破后最高价=10.6）
+        - 当前价从突破最高价回撤超过 INITIAL_TAKE_PROFIT_PULLBACK_RATIO (0.5%)
+        - 应触发 take_profit_half 信号，sell_ratio = INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE (0.6)
         """
-        logger.info("=== 测试12：首次止盈触发验证 ===")
+        logger.info("=== 测试12：回撤止盈触发 take_profit_half 信号 ===")
 
-        stock_code = "000002.SZ"
         cost_price = 10.0
-        initial_volume = 1000
+        breakout_highest = 10.6
+        pullback_threshold = config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO  # 0.005
+        # 回撤幅度超过阈值：0.5% + 0.1% = 0.6% 回撤
+        current_price = round(breakout_highest * (1 - pullback_threshold - 0.001), 4)
 
-        # 步骤1: 创建初始持仓
-        logger.info(f"步骤1: 创建初始持仓 - {stock_code}, 成本价: {cost_price}, 数量: {initial_volume}")
+        logger.info(f"测试参数: cost={cost_price}, 突破最高={breakout_highest}, "
+                    f"当前价={current_price:.4f}, 回撤={((breakout_highest - current_price) / breakout_highest):.4f}")
 
-        conn = self.create_test_db_connection()
-        cursor = conn.cursor()
+        stock_code = self._insert_position(
+            cost_price=cost_price,
+            current_price=current_price,
+            profit_triggered=0,
+            highest_price=breakout_highest,
+            profit_breakout_triggered=1,
+            breakout_highest_price=breakout_highest,
+        )
 
-        cursor.execute("""
-            INSERT OR REPLACE INTO positions
-            (stock_code, volume, available, cost_price, current_price,
-             open_date, profit_triggered, highest_price, stop_loss_price)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (stock_code, initial_volume, initial_volume, cost_price, cost_price,
-              datetime.now().strftime("%Y-%m-%d"), 0, cost_price,
-              cost_price * (1 + config.STOP_LOSS_RATIO)))
-        conn.commit()
+        signal_type, signal_info = self.pm.check_trading_signals(
+            stock_code, current_price=current_price
+        )
 
-        cursor.execute("SELECT volume, profit_triggered FROM positions WHERE stock_code=?", (stock_code,))
-        row = cursor.fetchone()
-        self.assertIsNotNone(row, "初始持仓应存在")
-        logger.info(f"初始持仓创建: volume={row[0]}, profit_triggered={row[1]}")
+        # 断言1: 触发首次止盈信号
+        self.assertEqual(signal_type, "take_profit_half",
+                         f"回撤超过阈值应触发 take_profit_half，实际: {signal_type}")
 
-        # 步骤2: 价格上涨至10.6元（达到6%盈利阈值）
-        logger.info("步骤2: 价格上涨至10.6元（达到6%盈利阈值）")
+        # 断言2: signal_info 包含必要字段
+        self.assertIn("sell_ratio", signal_info, "signal_info 应含 sell_ratio")
+        self.assertIn("pullback_ratio", signal_info, "signal_info 应含 pullback_ratio")
+        self.assertIn("breakout_highest_price", signal_info, "signal_info 应含 breakout_highest_price")
 
-        price_profit = 10.6
-        profit_ratio = (price_profit - cost_price) / cost_price
+        # 断言3: 卖出比例正确
+        self.assertAlmostEqual(signal_info["sell_ratio"],
+                               config.INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE, places=4,
+                               msg="卖出比例应等于 INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE")
 
-        cursor.execute("""
-            UPDATE positions
-            SET current_price = ?, highest_price = ?
-            WHERE stock_code = ?
-        """, (price_profit, price_profit, stock_code))
-        conn.commit()
+        # 断言4: 回撤比例满足阈值
+        self.assertGreaterEqual(signal_info["pullback_ratio"],
+                                config.INITIAL_TAKE_PROFIT_PULLBACK_RATIO,
+                                "signal_info 中的回撤比例应 >= INITIAL_TAKE_PROFIT_PULLBACK_RATIO")
 
-        # 验证盈利比例
-        self.assertAlmostEqual(profit_ratio, config.INITIAL_TAKE_PROFIT_RATIO, places=4,
-                               msg="盈利比例应达到首次止盈阈值")
-
-        logger.info(f"价格更新验证通过: current_price={price_profit:.2f}, profit_ratio={profit_ratio:.2%}")
-
-        # 步骤3: 验证应触发首次止盈
-        logger.info("步骤3: 验证应触发首次止盈")
-
-        # 计算卖出数量（60%）
-        sell_percentage = config.INITIAL_TAKE_PROFIT_RATIO_PERCENTAGE  # 0.6
-        expected_sell_volume = int(initial_volume * sell_percentage)  # 1000 * 0.6 = 600
-
-        logger.info(f"预期卖出数量: {expected_sell_volume}股 ({sell_percentage:.0%})")
-        logger.info(f"首次止盈阈值: {config.INITIAL_TAKE_PROFIT_RATIO:.1%}")
-        logger.info(f"当前盈利比例: {profit_ratio:.2%}")
-
-        # 验证盈利条件满足
-        cursor.execute("SELECT profit_triggered FROM positions WHERE stock_code=?", (stock_code,))
-        row = cursor.fetchone()
-        self.assertAlmostEqual(profit_ratio, config.INITIAL_TAKE_PROFIT_RATIO, places=4,
-                               msg="应满足首次止盈条件")
-        self.assertEqual(row[0], 0, "初始状态未触发首次止盈")
-
-        logger.info("✓ 首次止盈条件验证通过")
-
-        conn.close()
-        logger.info("=== 测试12完成：首次止盈触发验证通过 ===")
+        logger.info(f"断言通过: signal=take_profit_half, "
+                    f"sell_ratio={signal_info['sell_ratio']:.0%}, "
+                    f"pullback_ratio={signal_info['pullback_ratio']:.4f}")
+        logger.info("=== 测试12完成：回撤止盈触发验证通过 ===")
 
 
 if __name__ == '__main__':
-    # 配置unittest输出
     unittest.main(verbosity=2)

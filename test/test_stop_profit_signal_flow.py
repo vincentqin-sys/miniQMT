@@ -405,6 +405,63 @@ class TestStopProfitSignalFlow(TestBase):
             })
             self.assertFalse(ok)
 
+    def test_take_profit_full_blocked_when_available_zero(self):
+        """
+        B7: profit_triggered=True 且 available=0 时，
+        check_trading_signals 不应生成 take_profit_full 信号（已有委托在途）。
+
+        验证 check_trading_signals:2076 的 available<=0 提前返回逻辑。
+        当前价低于动态止盈位，但由于 available=0，信号应被压制。
+        """
+        cost_price = 10.0
+        highest_price = 12.0   # 浮盈 20%，匹配级别4（系数0.87）
+        trigger_price = highest_price * 0.87  # 10.44
+        current_price = trigger_price - 0.05  # 10.39，低于止盈位，本应触发
+
+        stock_code = self._insert_position(
+            cost_price=cost_price,
+            current_price=current_price,
+            profit_triggered=1,
+            highest_price=highest_price,
+            volume=1000,
+            available=0,        # 已有委托在途，应压制信号生成
+        )
+
+        signal_type, signal_info = self.pm.check_trading_signals(
+            stock_code, current_price=current_price
+        )
+
+        self.assertIsNone(signal_type,
+                          "profit_triggered=True 且 available=0 时不应产生 take_profit_full 信号")
+        self.assertIsNone(signal_info)
+
+    def test_take_profit_full_triggers_when_available_nonzero(self):
+        """
+        B7 对照组：available>0 时，相同的价格条件应正常触发 take_profit_full 信号。
+        确保 available=0 的压制逻辑不影响正常场景。
+        """
+        cost_price = 10.0
+        highest_price = 12.0
+        trigger_price = highest_price * 0.87  # 10.44
+        current_price = trigger_price - 0.05  # 10.39
+
+        stock_code = self._insert_position(
+            cost_price=cost_price,
+            current_price=current_price,
+            profit_triggered=1,
+            highest_price=highest_price,
+            volume=1000,
+            available=400,      # 剩余可用持仓，应正常触发
+        )
+
+        signal_type, signal_info = self.pm.check_trading_signals(
+            stock_code, current_price=current_price
+        )
+
+        self.assertEqual(signal_type, "take_profit_full",
+                         "available>0 时价格跌破动态止盈位应触发 take_profit_full")
+        self.assertIn("dynamic_take_profit_price", signal_info)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
