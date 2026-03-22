@@ -963,6 +963,19 @@ class GridTradingManager:
         logger.info(f"[GRID] execute_grid_trade: 开始执行交易 signal={signal}")
 
         try:
+            # RISK-3修复: 在持有 self.lock 之前预取持仓快照。
+            # 若在 with self.lock: 内部再调用 get_position()（→ memory_conn_lock），
+            # 而其他路径（如 check_grid_signals）在持有 memory_conn_lock 时尝试获取 self.lock，
+            # 将形成 AB-BA 死锁。提前获取持仓快照、锁外释放 memory_conn_lock，
+            # 确保两个锁的获取顺序始终单向（memory_conn_lock → self.lock），消除死锁风险。
+            signal_type_early = signal.get('signal_type', '')
+            stock_code_early = signal.get('stock_code', '')
+            position_snapshot = None
+            if signal_type_early == 'SELL' and stock_code_early:
+                position_snapshot = self.position_manager.get_position(stock_code_early)
+                logger.debug(f"[GRID] execute_grid_trade: RISK-3预取持仓 stock_code={stock_code_early}, "
+                             f"snapshot={'有持仓' if position_snapshot else '无持仓'}")
+
             with self.lock:
                 stock_code = signal['stock_code']
                 session = self.sessions.get(self._normalize_code(stock_code))
@@ -984,7 +997,7 @@ class GridTradingManager:
                     success = self._execute_grid_buy(session, signal)
                 elif signal_type == 'SELL':
                     logger.debug(f"[GRID] execute_grid_trade: 调用_execute_grid_sell")
-                    success = self._execute_grid_sell(session, signal)
+                    success = self._execute_grid_sell(session, signal, position_snapshot=position_snapshot)
                 else:
                     logger.error(f"[GRID] execute_grid_trade: 未知信号类型: {signal_type}")
                     return False
@@ -1080,7 +1093,10 @@ class GridTradingManager:
         # 2. 计算买入金额和数量
         remaining_investment = session.max_investment - session.current_investment
         # 单次买入金额 = min(剩余额度, 总额度的20%)
-        # 注意: 这里使用固定比例0.2而非session.position_ratio,后者用于卖出计算
+        # 设计说明: position_ratio 字段仅控制【卖出】时每次卖出持仓的比例（见 _execute_grid_sell），
+        # 【买入】每次固定使用 max_investment 的 20% 作为单档投入额，
+        # 以保证均匀分仓、防止早期满仓（最多 5 次即可用完 100%）。
+        # 如需调整买入比例，修改此处的 0.2 常量或将其提升为配置项。
         target_buy_amount = session.max_investment * 0.2
         buy_amount = min(remaining_investment, target_buy_amount)
         logger.debug(f"[GRID] _execute_grid_buy: remaining_investment={remaining_investment:.2f}, "
@@ -1218,14 +1234,21 @@ class GridTradingManager:
 
         return True
 
-    def _execute_grid_sell(self, session: GridSession, signal: dict) -> bool:
-        """执行网格卖出"""
+    def _execute_grid_sell(self, session: GridSession, signal: dict, position_snapshot=None) -> bool:
+        """执行网格卖出
+
+        Args:
+            session: 网格会话
+            signal: 交易信号
+            position_snapshot: 持仓快照（由调用方在锁外预取，用于 RISK-3 死锁预防）；
+                               若为 None 则在内部获取（兼容直接调用场景）。
+        """
         stock_code = session.stock_code
         trigger_price = signal['trigger_price']
         logger.info(f"[GRID] _execute_grid_sell: 开始执行 stock_code={stock_code}, trigger_price={trigger_price:.2f}")
 
-        # 1. 获取当前持仓
-        position = self.position_manager.get_position(stock_code)
+        # 1. 获取当前持仓（优先使用调用方预取的快照，避免在持有 self.lock 时再次获取锁）
+        position = position_snapshot if position_snapshot is not None else self.position_manager.get_position(stock_code)
         if not position:
             logger.error(f"[GRID] _execute_grid_sell: {stock_code} 持仓不存在")
             return False
@@ -1239,6 +1262,8 @@ class GridTradingManager:
             return False
 
         # 2. 计算卖出数量
+        # position_ratio 字段的语义说明：仅用于控制每次卖出持仓比例（此处），
+        # 买入每档固定使用 max_investment 的 20%，两者不对称，属于设计上的有意差异。
         # BUG-1修复：改用 (int(x) // 100) * 100 形式，语义更清晰：
         # 先计算应卖股数（浮点转整数截断），再向下取整到100的倍数
         # 与买入逻辑的整百方式统一，两者数值等价但表达一致

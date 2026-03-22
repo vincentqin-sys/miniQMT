@@ -32,9 +32,9 @@ class MockPositionManager:
     """模拟持仓管理器"""
     def __init__(self):
         self.positions = {}
+        self.signal_lock = __import__('threading').RLock()
+        self.latest_signals = dict()
         self.account_info = {
-        self.signal_lock = __import__('threading').RLock()  # signal_lock
-        self.latest_signals = dict()  # latest_signals
             'available_cash': 100000.0,
             'total_asset': 150000.0
         }
@@ -298,18 +298,22 @@ class GridTradingTestSuite:
             }
             # 第一次启动
             session1 = self.grid_manager.start_grid_session(self.stock_code, config_data)
-            # 第二次启动(应该替换旧会话)
-            session2 = self.grid_manager.start_grid_session(self.stock_code, config_data)
+            # 第二次启动(已存在活跃会话, 应该拒绝并抛出 ValueError)
+            duplicate_rejected = False
+            try:
+                self.grid_manager.start_grid_session(self.stock_code, config_data)
+            except ValueError:
+                duplicate_rejected = True
 
             self.record_result(
                 "8. 重复启动会话处理",
-                session2 is not None and session2.id != session1.id,
-                f"新会话ID: {session2.id if session2 else 'N/A'}"
+                duplicate_rejected,
+                "活跃会话存在时正确拒绝重复启动" if duplicate_rejected else "未拒绝重复启动（实现与设计不符）"
             )
 
-            # 清理
-            if session2:
-                self.grid_manager.stop_grid_session(session2.id, 'test_cleanup')
+            # 清理 session1（必须在测试9/10之前完成，否则残留会话影响后续测试）
+            if session1:
+                self.grid_manager.stop_grid_session(session1.id, 'test_cleanup')
         except Exception as e:
             self.record_result("8. 重复启动会话处理", False, str(e))
 

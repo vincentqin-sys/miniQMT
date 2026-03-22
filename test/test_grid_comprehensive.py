@@ -32,11 +32,9 @@ logger = get_logger("test_grid_comprehensive")
 class MockPositionManager:
     """模拟持仓管理器"""
     def __init__(self):
+        self.signal_lock = __import__('threading').RLock()
+        self.latest_signals = dict()
         self.positions = {
-        self.signal_lock = __import__('threading').RLock()  # 添加signal_lock属性
-        self.latest_signals = dict()  # 添加latest_signals属性
-        self.signal_lock = __import__('threading').RLock()  # signal_lock
-        self.latest_signals = dict()  # latest_signals
             '000001.SZ': {
                 'stock_code': '000001.SZ',
                 'stock_name': '测试股票',
@@ -440,7 +438,10 @@ class GridTradingTester:
         # 重置
         session.current_center_price = 10.00
 
-        # 测试2: 目标盈利退出
+        # 测试2: 目标盈利退出 (需要 buy_count>0, sell_count>0, max_investment>0)
+        session.max_investment = 10000.0
+        session.buy_count = 1
+        session.sell_count = 1
         session.total_buy_amount = 10000
         session.total_sell_amount = 11100  # 盈利11%
         reason = self.grid_mgr._check_exit_conditions(session, 10.00)
@@ -450,13 +451,16 @@ class GridTradingTester:
         # 重置
         session.total_sell_amount = 9000
 
-        # 测试3: 止损退出
+        # 测试3: 止损退出 (buy_count/sell_count/max_investment 沿用测试2的值)
         reason = self.grid_mgr._check_exit_conditions(session, 10.00)
         assert reason == 'stop_loss', f"Should exit due to stop loss, got {reason}"
         logger.info(f"[PASS] Stop loss exit triggered: -10%")
 
-        # 重置
+        # 重置 - 确保 profit/loss 退出不会误触发时间过期测试
         session.total_buy_amount = 0
+        session.total_sell_amount = 0
+        session.buy_count = 0
+        session.sell_count = 0
 
         # 测试4: 时间过期
         session.end_time = datetime.now() - timedelta(days=1)
