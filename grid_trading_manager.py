@@ -256,7 +256,8 @@ class GridTradingManager:
                     try:
                         end_time_dt = datetime.fromisoformat(end_time_str)
                         end_time_display = end_time_dt.strftime('%Y-%m-%d %H:%M:%S')
-                    except:
+                    except (ValueError, TypeError) as fmt_err:
+                        logger.debug(f"[GRID] 时间格式化失败: {fmt_err}")
                         end_time_display = end_time_str
                 else:
                     end_time_display = 'N/A'
@@ -666,8 +667,16 @@ class GridTradingManager:
 
         return final_stats
 
-    def _check_exit_conditions(self, session: GridSession, current_price: float) -> Optional[str]:
-        """检查退出条件,返回退出原因或None"""
+    def _check_exit_conditions(self, session: GridSession, current_price: float,
+                               position_snapshot=None) -> Optional[str]:
+        """检查退出条件,返回退出原因或None
+
+        Args:
+            session: 网格会话对象
+            current_price: 当前价格
+            position_snapshot: 可选的持仓快照（锁外预取，避免锁内调用外部依赖）。
+                               若为 None，则在方法内部直接调用 get_position()（向后兼容）。
+        """
         logger.debug(f"[GRID] _check_exit_conditions: session_id={session.id}, stock_code={session.stock_code}, current_price={current_price:.2f}")
 
         # 1. 偏离度检测（双重保护）
@@ -720,8 +729,12 @@ class GridTradingManager:
                 logger.info(f"[GRID] _check_exit_conditions: {session.stock_code} 达到运行时长限制, 触发退出")
                 return 'expired'
 
-        # 4. 持仓清空
-        position = self.position_manager.get_position(session.stock_code)
+        # 4. 持仓清空（优先使用锁外预取的快照，避免锁内调用外部依赖导致死锁）
+        # A-3修复：若调用方提供了 position_snapshot，直接使用；否则降级为直接调用（向后兼容）。
+        if position_snapshot is not None:
+            position = position_snapshot
+        else:
+            position = self.position_manager.get_position(session.stock_code)
         volume = position.get('volume', 0) if position else 0
         logger.debug(f"[GRID] _check_exit_conditions: 持仓检测 volume={volume}")
         if not position or volume == 0:
@@ -808,6 +821,17 @@ class GridTradingManager:
         logger.debug(f"[GRID] check_grid_signals: stock_code={stock_code}, current_price={current_price:.2f}, "
                     f"active_sessions_count={len(self.sessions)}")
 
+        # A-3修复: 锁外预取持仓，避免在持有 self.lock 时调用 position_manager.get_position()
+        # 风险: _check_exit_conditions 内部（条件4）调用 get_position()，若 position_manager
+        # 内部某方法先持 signal_lock 再请求 grid_manager.lock，将形成 AB-BA 死锁。
+        # 修复: 在获取 self.lock 之前先读取持仓快照，通过参数传入 _check_exit_conditions，
+        # 避免锁内执行可能引发锁序反转的外部调用。
+        position_snapshot = None
+        try:
+            position_snapshot = self.position_manager.get_position(stock_code)
+        except Exception as e:
+            logger.warning(f"[GRID] check_grid_signals: 锁外预取持仓失败(将视为无持仓): {e}")
+
         with self.lock:
             session = self.sessions.get(self._normalize_code(stock_code))
             if not session:
@@ -819,8 +843,8 @@ class GridTradingManager:
 
             logger.debug(f"[GRID] check_grid_signals: 找到活跃会话 session_id={session.id}, status={session.status}")
 
-            # 1. 检查退出条件
-            exit_reason = self._check_exit_conditions(session, current_price)
+            # 1. 检查退出条件（传入锁外预取的持仓快照）
+            exit_reason = self._check_exit_conditions(session, current_price, position_snapshot=position_snapshot)
             if exit_reason:
                 logger.info(f"[GRID] check_grid_signals: {stock_code} 触发退出条件 reason={exit_reason}")
                 # RISK-4修复：捕获 ValueError，防止并发场景下（如 Web API 同时手动停止）
@@ -979,23 +1003,20 @@ class GridTradingManager:
                                     f"stock_code={stock_code}, signal_type={signal_type}")
                     return False
 
-                # ⚠️ BUG修复: 使用相对于初始中心价的固定档位进行冷却
-                # 问题: 动态中心价导致档位变化，冷却key失效，# 解决: 填基于初始中心价计算固定档位价格
-                initial_upper_level = session.center_price * (1 + session.price_interval)
-                initial_lower_level = session.center_price * (1 - session.price_interval)
-
-
-                # 根据信号类型选择冷却档位
-                if signal_type == 'SELL':
-                    cooldown_level = initial_upper_level
-                else:  # BUY
-                    cooldown_level = initial_lower_level
-
-                cooldown_key = (session.id, cooldown_level)
-                self.level_cooldowns[cooldown_key] = time.time()
-                logger.debug(f"[GRID] execute_grid_trade: 设置档位冷却 session_id={session.id}, "
-                            f"level={cooldown_level:.2f} (基于初始中心价{session.center_price:.2f}), "
-                            f"signal_type={signal_type}")
+                # A-2修复: 冷却键改用 signal['grid_level']（触发信号的实际档位价格）
+                # 问题根因: 原来用初始中心价计算固定档位作为冷却键，但 _check_level_crossing 读键时
+                # 每次重新用 current_center_price（交易后已更新）计算档位，两侧键值不一致，冷却完全失效。
+                # 修复方案: 读写两侧统一使用 signal['grid_level']（即 tracker.crossed_level，穿越时的实际档位价格），
+                # 这是两侧唯一共享的精确键值，与 _check_level_crossing 写 tracker.crossed_level 的时机一致。
+                cooldown_level = signal.get('grid_level')
+                if cooldown_level is not None:
+                    cooldown_key = (session.id, cooldown_level)
+                    self.level_cooldowns[cooldown_key] = time.time()
+                    logger.debug(f"[GRID] execute_grid_trade: 设置档位冷却 session_id={session.id}, "
+                                f"level={cooldown_level:.2f} (触发档位价格), "
+                                f"signal_type={signal_type}")
+                else:
+                    logger.warning(f"[GRID] execute_grid_trade: signal 中无 grid_level，跳过冷却设置")
 
                 # 执行交易后的状态
                 logger.debug(f"[GRID] execute_grid_trade: 交易后状态 trade_count={session.trade_count}, "
@@ -1266,14 +1287,19 @@ class GridTradingManager:
         session.trade_count += 1
         session.sell_count += 1
         session.total_sell_amount += sell_amount
-        # 卖出时减少投入(回收资金)
-        recovered_cost = sell_volume * cost_price
-        session.current_investment = max(0, session.current_investment - recovered_cost)
+        # A-1修复: 卖出后按实际成交价（trigger_price）回收资金，而非按成本价（cost_price）。
+        # 原因：current_investment 代表"已占用的资金额度"（以买入成交额累加），
+        # 卖出时释放额度应以实际成交额为准（sell_amount = sell_volume * trigger_price），
+        # 按成本价回收会导致额度与实际现金流不一致：
+        #   - 盈利卖出时：回收额偏低 → current_investment 偏高 → 可用额度被低估（偏保守但有信息误差）
+        #   - 亏损卖出时：回收额偏高 → current_investment 偏低 → V3 硬上限仍兜底，但中间状态不准确
+        # 使用 sell_amount（即已计算好的 sell_volume * trigger_price）直接回收，语义精确。
+        session.current_investment = max(0, session.current_investment - sell_amount)
 
         logger.debug(f"[GRID] _execute_grid_sell: 更新会话统计 trade_count {old_trade_count}->{session.trade_count}, "
                     f"sell_count {old_sell_count}->{session.sell_count}, "
                     f"total_sell {old_total_sell:.2f}->{session.total_sell_amount:.2f}, "
-                    f"investment {old_investment:.2f}->{session.current_investment:.2f}, recovered_cost={recovered_cost:.2f}")
+                    f"investment {old_investment:.2f}->{session.current_investment:.2f}, recovered={sell_amount:.2f}(trigger_price×vol)")
 
         # 5. 记录交易
         trade_data = {

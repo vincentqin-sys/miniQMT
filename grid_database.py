@@ -384,6 +384,17 @@ class DatabaseManager:
         """更新网格会话"""
         logger.debug(f"[GRID-DB] update_grid_session: session_id={session_id}, updates={updates}")
 
+        # D-1修复: 字段名白名单校验，防止动态拼接 SQL 时引入非法列名
+        _ALLOWED_SESSION_FIELDS = {
+            'status', 'current_center_price', 'current_investment',
+            'trade_count', 'buy_count', 'sell_count',
+            'total_buy_amount', 'total_sell_amount',
+            'stop_time', 'stop_reason', 'risk_level', 'template_name'
+        }
+        invalid_fields = set(updates.keys()) - _ALLOWED_SESSION_FIELDS
+        if invalid_fields:
+            raise ValueError(f"update_grid_session: 非法字段名 {invalid_fields}，拒绝执行以防 SQL 注入")
+
         with self.lock:
             set_clause = ', '.join([f"{k}=?" for k in updates.keys()])
             values = list(updates.values()) + [session_id]

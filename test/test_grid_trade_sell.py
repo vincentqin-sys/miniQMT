@@ -134,14 +134,13 @@ class TestGridTradeSell(unittest.TestCase):
         expected_sell_amount = expected_sell_volume * 10.5  # 2100
 
         # 验证资金回收
-        # recovered_cost = 200 * 10.0 = 2000
-        expected_recovered = 200 * 10.0
-        expected_investment = 5000 - expected_recovered  # 3000
+        # A-1修复：按实际卖出金额（trigger_price）回收，而非按成本价回收
+        # recovered = sell_volume * trigger_price = 200 * 10.5 = 2100
+        expected_investment = 5000 - expected_sell_amount  # 5000 - 2100 = 2900
 
         print(f"预期卖出数量: {expected_sell_volume}")
         print(f"预期卖出金额: {expected_sell_amount:.2f}")
-        print(f"预期回收成本: {expected_recovered:.2f}")
-        print(f"预期剩余投入: {expected_investment:.2f}")
+        print(f"预期剩余投入: {expected_investment:.2f} (按trigger_price回收)")
 
         # 验证会话统计更新
         self.assertEqual(session.sell_count, 1, "卖出次数应为1")
@@ -161,7 +160,7 @@ class TestGridTradeSell(unittest.TestCase):
                               msg="记录的金额应正确")
 
         print(f"[OK] 卖出成功: 数量={expected_sell_volume}, 金额={expected_sell_amount:.2f}")
-        print(f"[OK] 投入更新: {session.current_investment:.2f} (回收{expected_recovered:.2f})")
+        print(f"[OK] 投入更新: {session.current_investment:.2f} (按trigger_price回收 {expected_sell_amount:.2f})")
 
     def test_sell_with_no_position(self):
         """测试2: 无持仓时拒绝卖出"""
@@ -337,14 +336,15 @@ class TestGridTradeSell(unittest.TestCase):
         self.assertTrue(result)
 
         # 卖出200股
-        # recovered_cost = 200 * 10.0 = 2000
-        # new_investment = 5000 - 2000 = 3000
-        self.assertAlmostEqual(session.current_investment, 3000.0, places=2)
+        # A-1修复：按实际卖出金额（trigger_price）回收
+        # recovered = sell_volume * trigger_price = 200 * 10.5 = 2100
+        # new_investment = 5000 - 2100 = 2900
+        self.assertAlmostEqual(session.current_investment, 2900.0, places=2)
 
         # 卖出金额 = 200 * 10.5 = 2100
         self.assertAlmostEqual(session.total_sell_amount, 2100.0, places=2)
 
-        print(f"[OK] 卖出200股, 回收成本2000, 剩余投入3000")
+        print(f"[OK] 卖出200股, 按trigger_price(10.5)回收2100, 剩余投入2900")
         print(f"[OK] 卖出金额2100, 网格利润={session.get_grid_profit():.2f}")
 
     def test_real_mode_sell(self):

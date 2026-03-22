@@ -209,13 +209,14 @@ class TestGridTradeFundManagement(unittest.TestCase):
         cursor.execute("SELECT volume FROM grid_trades WHERE session_id=1 AND trade_type='SELL'")
         sell_volume = cursor.fetchone()['volume']
 
-        # recovered_cost = sell_volume * cost_price
-        recovered = sell_volume * 10.0
+        # A-1修复：按实际卖出金额（trigger_price）回收，而非按成本价
+        # sell_signal['trigger_price'] = 10.5
+        recovered = sell_volume * 10.5
         expected_investment = max(0, before_investment - recovered)
 
         self.assertAlmostEqual(session.current_investment, expected_investment, places=2)
 
-        print(f"[OK] 卖出{sell_volume}股, 回收成本={recovered:.2f}, 剩余投入={after_investment:.2f}")
+        print(f"[OK] 卖出{sell_volume}股, 按trigger_price回收={recovered:.2f}, 剩余投入={after_investment:.2f}")
 
     def test_reject_buy_when_limit_reached(self):
         """测试5: 达到限额后拒绝买入"""
