@@ -20,7 +20,7 @@ import config
 from logger import get_logger
 from data_manager import get_data_manager
 from indicator_calculator import get_indicator_calculator
-from position_manager import get_position_manager
+from position_manager import get_position_manager, _create_qmt_trader
 from trading_executor import get_trading_executor
 from strategy import get_trading_strategy
 from config_manager import get_config_manager
@@ -668,6 +668,26 @@ def save_config():
                 position_manager.memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
                 position_manager._create_memory_table()
                 position_manager._sync_db_to_memory()  # 从SQLite重新加载数据
+
+                # 🔧 Fix: 模式切换时同步初始化/清理 qmt_trader
+                # 从模拟切换到实盘：初始化 qmt_trader 并连接
+                # 从实盘切换到模拟：清理 qmt_trader
+                if not new_simulation_mode:
+                    # 切换到实盘模式：尝试初始化 QMT 连接
+                    logger.info("模式切换: 尝试初始化实盘交易接口...")
+                    try:
+                        # 异步连接，避免阻塞API线程
+                        position_manager.qmt_connected = False
+                        position_manager.start_qmt_connect_async(reason="mode_switch")
+                        logger.info("模式切换: 已发起QMT连接请求(异步)")
+                    except Exception as e:
+                        logger.error(f"模式切换: 初始化实盘交易接口失败: {e}")
+                        position_manager.qmt_connected = False
+                else:
+                    # 切换到模拟模式：清理 qmt_trader
+                    logger.info("模式切换: 清理实盘交易接口，切换到模拟模式")
+                    position_manager.qmt_trader = None
+                    position_manager.qmt_connected = False
 
                 logger.warning(f"交易模式切换: {'模拟交易' if new_simulation_mode else '实盘交易'} (仅运行时，不持久化)")
 

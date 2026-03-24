@@ -51,6 +51,7 @@ ENABLE_LOG_CLEANUP = True           # 是否启用日志清理
 USE_SYNC_ORDER_API = False          # 使用同步下单接口(True)还是异步接口(False)
                                      # False: 使用order_stock_async()返回seq号,需要回调映射
                                      # True: 使用order_stock()直接返回order_id
+QMT_CONNECT_TIMEOUT = 30            # QMT交易接口连接超时(秒)，避免connect卡死
 
 # 注释说明：
 # - 策略线程始终运行，进行信号检测和监控

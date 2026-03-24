@@ -648,20 +648,22 @@
 
             const data = await response.json();
             console.log(`API Response: ${options.method || 'GET'} ${endpoint}`, data.status || 'success');
-            
-            // 更新API连接状态为已连接
-            updateConnectionStatus(true);
-            
+
+            // 注意: 不在此处调用 updateConnectionStatus(true)
+            // 连接状态由专用轮询函数 throttledCheckApiConnection (每5秒) 统一维护，
+            // 避免任意 API 调用成功时误将 QMT 断连状态覆盖为"已连接"。
+
             return data;
         } catch (error) {
             console.error(`API Error: ${options.method || 'GET'} ${endpoint}`, error);
             showMessage(`请求失败: ${error.message}`, 'error');
-            
-            // 可能是API连接问题，标记为未连接
-            if (endpoint !== 'connection/status') {
+
+            // 仅在网络级别错误（服务器完全不可达）时标记断连，
+            // HTTP 4xx/5xx 应用层错误不代表 QMT 连接问题。
+            if (endpoint !== 'connection/status' && error instanceof TypeError) {
                 updateConnectionStatus(false);
             }
-            
+
             throw error;
         }
     }

@@ -166,6 +166,8 @@ class PositionManager:
         # 🔧 Fail-Safe 重连支持
         self._reconnect_lock = threading.Lock()
         self._last_reconnect_time = 0.0  # 上次重连时间戳，用于冷却保护
+        self._reconnect_in_progress = False  # 防止并发重连/连接
+        self._reconnect_thread = None  # 记录后台重连线程（仅用于诊断）
 
 
     def check_qmt_connection_health(self):
@@ -184,6 +186,10 @@ class PositionManager:
         if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
             return True  # XtQuantManager 有独立的 HealthMonitor
 
+        # 正在重连时，避免触发线程监控重启
+        if self._reconnect_in_progress:
+            return True
+
         if not self.qmt_trader:
             return False
         try:
@@ -191,6 +197,81 @@ class PositionManager:
         except Exception as e:
             logger.warning(f'[HEALTH] QMT 心跳检查异常: {e}')
             return False
+
+    def _start_qmt_connect_worker(self, mode="reconnect", reason=""):
+        """
+        后台发起QMT连接/重连，避免阻塞监控线程或API线程。
+
+        mode:
+            - "connect": 直接调用 connect()
+            - "reconnect": 调用 reconnect_xttrader()
+        """
+        # 仅实盘且非 XtQuantManager 模式下执行
+        if config.ENABLE_SIMULATION_MODE:
+            return True
+        if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
+            return False  # XtQuantManager 有自己的重连机制
+
+        if self.qmt_trader is None:
+            try:
+                self.qmt_trader = _create_qmt_trader()
+            except Exception as e:
+                logger.error(f"[RECONNECT] 创建 qmt_trader 失败: {e}")
+                self.qmt_connected = False
+                return False
+
+        with self._reconnect_lock:
+            if self._reconnect_in_progress:
+                logger.info(f"[RECONNECT] 已有连接任务进行中，跳过本次{mode}请求")
+                return False
+            self._reconnect_in_progress = True
+
+        def _worker():
+            try:
+                if mode == "connect":
+                    result = self.qmt_trader.connect()
+                    success = result is not None
+                else:
+                    success = bool(self.qmt_trader.reconnect_xttrader())
+
+                if success:
+                    self.qmt_connected = True
+                    # 重新注册成交回报回调
+                    try:
+                        self.qmt_trader.register_trade_callback(self._on_trade_callback)
+                        logger.info('[RECONNECT] 已重新注册 trade_callback')
+                    except Exception as e:
+                        logger.warning(f'[RECONNECT] 重新注册 trade_callback 失败 (非致命): {e}')
+                    # 重新注册断连回调
+                    try:
+                        self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
+                        logger.info('[RECONNECT] 已重新注册 disconnect_callback')
+                    except Exception as e:
+                        logger.warning(f'[RECONNECT] 重新注册 disconnect_callback 失败 (非致命): {e}')
+                    logger.info(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}成功，恢复正常运行')
+                else:
+                    self.qmt_connected = False
+                    logger.error(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}失败')
+            except Exception as e:
+                self.qmt_connected = False
+                logger.error(f'[RECONNECT] QMT {("连接" if mode=="connect" else "重连")}异常: {e}')
+            finally:
+                with self._reconnect_lock:
+                    self._reconnect_in_progress = False
+
+        self._reconnect_thread = threading.Thread(
+            target=_worker,
+            daemon=True,
+            name=f"qmt_{mode}_worker"
+        )
+        self._reconnect_thread.start()
+        if reason:
+            logger.info(f"[RECONNECT] 已发起{mode}请求: {reason}")
+        return False
+
+    def start_qmt_connect_async(self, reason="manual"):
+        """对外提供的异步连接入口（用于模式切换或手动连接）。"""
+        return self._start_qmt_connect_worker(mode="connect", reason=reason)
 
     def _attempt_qmt_reconnect(self):
         """
@@ -209,10 +290,11 @@ class PositionManager:
             return True
         if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
             return False  # XtQuantManager 有自己的重连机制
-        if self.qmt_trader is None:
-            return False  # 模拟模式下 qmt_trader 为 None
 
         with self._reconnect_lock:
+            if self._reconnect_in_progress:
+                logger.info('[RECONNECT] 已有连接任务进行中，跳过本次重连')
+                return False
             now = time.time()
             cooldown = getattr(config, 'XTQUANT_RECONNECT_INTERVAL', 300)
 
@@ -223,34 +305,9 @@ class PositionManager:
 
             self._last_reconnect_time = now
 
-        # 锁外执行实际重连，避免长时间持锁
+        # 锁外启动后台重连，避免阻塞监控线程
         logger.warning('[RECONNECT] 开始尝试重连 QMT xttrader 接口...')
-        try:
-            success = self.qmt_trader.reconnect_xttrader()
-            if success:
-                self.qmt_connected = True
-                # 重新注册成交回报回调
-                try:
-                    self.qmt_trader.register_trade_callback(self._on_trade_callback)
-                    logger.info('[RECONNECT] 已重新注册 trade_callback')
-                except Exception as e:
-                    logger.warning(f'[RECONNECT] 重新注册 trade_callback 失败 (非致命): {e}')
-                # 重新注册断连回调
-                try:
-                    self.qmt_trader.register_disconnect_callback(self._on_qmt_disconnect)
-                    logger.info('[RECONNECT] 已重新注册 disconnect_callback')
-                except Exception as e:
-                    logger.warning(f'[RECONNECT] 重新注册 disconnect_callback 失败 (非致命): {e}')
-                logger.info('[RECONNECT] QMT 重连成功，恢复正常运行')
-                return True
-            else:
-                self.qmt_connected = False
-                logger.error('[RECONNECT] QMT 重连失败，等待下次冷却后重试')
-                return False
-        except Exception as e:
-            self.qmt_connected = False
-            logger.error(f'[RECONNECT] QMT 重连异常: {e}')
-            return False
+        return self._start_qmt_connect_worker(mode="reconnect", reason="auto_reconnect")
 
     def _on_qmt_disconnect(self):
         """
@@ -1268,13 +1325,14 @@ class PositionManager:
                         final_stop_loss_price = round(calculated_slp, 2) if calculated_slp is not None else None
 
 
-                    # 使用普通cursor执行更新（保持原有UPDATE语句不变）
+                    # 使用普通cursor执行更新
+                    # 修复：同步更新 base_cost_price，确保加仓后"基准成本"字段保持最新
                     cursor.execute("""
                         UPDATE positions
-                        SET volume=?, cost_price=?, current_price=?, market_value=?, available=?,
+                        SET volume=?, cost_price=?, base_cost_price=?, current_price=?, market_value=?, available=?,
                             profit_ratio=?, last_update=?, highest_price=?, stop_loss_price=?, profit_triggered=?, stock_name=?
                         WHERE stock_code=?
-                    """, (int(p_volume), final_cost_price, final_current_price, p_market_value, int(p_available),
+                    """, (int(p_volume), final_cost_price, p_base_cost_price, final_current_price, p_market_value, int(p_available),
                         p_profit_ratio, now, final_highest_price, final_stop_loss_price, final_profit_triggered, stock_name, stock_code))
 
                     # 【关键修改】使用字典访问记录变化
@@ -2486,27 +2544,29 @@ class PositionManager:
                 old_volume = int(position.get('volume', 0))
                 old_cost_price = float(position.get('cost_price', 0))
                 old_available = int(position.get('available', old_volume))
-                
+
                 # 计算新的持仓数据
                 new_volume = old_volume + buy_volume
                 new_available = old_available + buy_volume
-                
+
                 # 加权平均成本价计算
                 total_cost = (old_volume * old_cost_price) + (buy_volume * buy_price)
                 new_cost_price = total_cost / new_volume
-                
+
                 logger.info(f"[模拟交易] {stock_code} 加仓:")
                 logger.info(f"  - 原持仓: 数量={old_volume}, 成本价={old_cost_price:.2f}")
                 logger.info(f"  - 新买入: 数量={buy_volume}, 价格={buy_price:.2f}")
                 logger.info(f"  - 合并后: 数量={new_volume}, 新成本价={new_cost_price:.2f}")
-                
+
                 # 获取其他持仓信息
                 current_price = position.get('current_price', buy_price)
                 profit_triggered = position.get('profit_triggered', False)
                 highest_price = max(float(position.get('highest_price', 0)), buy_price)
                 open_date = position.get('open_date')  # 保持原开仓日期
                 stock_name = position.get('stock_name')
-                
+                # 保持原始基准成本价不变
+                base_cost_price = position.get('base_cost_price', old_cost_price)
+
             else:
                 # 新建仓
                 new_volume = buy_volume
@@ -2517,7 +2577,9 @@ class PositionManager:
                 highest_price = buy_price
                 open_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # 新开仓时间
                 stock_name = self.data_manager.get_stock_name(stock_code)
-                
+                # 新建仓：基准成本价=买入价格
+                base_cost_price = buy_price
+
                 logger.info(f"[模拟交易] {stock_code} 新建仓: 数量={new_volume}, 成本价={new_cost_price:.2f}")
             
             # 重新计算止损价格
@@ -2536,7 +2598,8 @@ class PositionManager:
                 highest_price=highest_price,
                 open_date=open_date,
                 stop_loss_price=new_stop_loss_price,
-                stock_name=stock_name
+                stock_name=stock_name,
+                base_cost_price=base_cost_price
             )
             
             if success:
@@ -2562,7 +2625,8 @@ class PositionManager:
 
     def _simulate_update_position(self, stock_code, volume, cost_price, available=None,
                                 current_price=None, profit_triggered=False, highest_price=None,
-                                open_date=None, stop_loss_price=None, stock_name=None):
+                                open_date=None, stop_loss_price=None, stock_name=None,
+                                base_cost_price=None):
         """
         模拟交易专用的持仓更新方法 - 只更新内存数据库
 
@@ -2584,6 +2648,8 @@ class PositionManager:
             p_available = int(float(available)) if available is not None else p_volume
             p_highest_price = float(highest_price) if highest_price is not None else p_current_price
             p_stop_loss_price = float(stop_loss_price) if stop_loss_price is not None else None
+            # 修复：base_cost_price 保留初始建仓成本，不随加仓/卖出而变化；未传入时用 cost_price 兜底
+            p_base_cost_price = round(float(base_cost_price), 2) if base_cost_price is not None and float(base_cost_price) > 0 else p_cost_price
 
             # 布尔值转换
             if isinstance(profit_triggered, str):
@@ -2629,11 +2695,12 @@ class PositionManager:
                     original_open_date = result[0]
                     cursor.execute("""
                         UPDATE positions
-                        SET volume=?, cost_price=?, current_price=?, market_value=?, available=?,
+                        SET volume=?, cost_price=?, base_cost_price=?, current_price=?, market_value=?, available=?,
                             profit_ratio=?, last_update=?, highest_price=?, stop_loss_price=?,
                             profit_triggered=?, stock_name=?
                         WHERE stock_code=?
-                    """, (p_volume, round(p_cost_price, 2), round(p_current_price, 2), p_market_value,
+                    """, (p_volume, round(p_cost_price, 2), round(p_base_cost_price, 2),
+                        round(p_current_price, 2), p_market_value,
                         p_available, p_profit_ratio, now, round(p_highest_price, 2),
                         round(p_stop_loss_price, 2) if p_stop_loss_price else None,
                         p_profit_triggered, stock_name, stock_code))
@@ -2641,11 +2708,12 @@ class PositionManager:
                     # 新增持仓
                     cursor.execute("""
                         INSERT INTO positions
-                        (stock_code, stock_name, volume, cost_price, current_price, market_value,
+                        (stock_code, stock_name, volume, cost_price, base_cost_price, current_price, market_value,
                         available, profit_ratio, last_update, open_date, profit_triggered,
                         highest_price, stop_loss_price)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (stock_code, stock_name, p_volume, round(p_cost_price, 2),
+                        round(p_base_cost_price, 2),
                         round(p_current_price, 2), p_market_value, p_available, p_profit_ratio,
                         now, open_date, p_profit_triggered, round(p_highest_price, 2),
                         round(p_stop_loss_price, 2) if p_stop_loss_price else None))
@@ -2755,6 +2823,8 @@ class PositionManager:
                 highest_price = position.get('highest_price', current_price)
                 open_date = position.get('open_date')
                 stock_name = position.get('stock_name')
+                # 保持原始基准成本价不变
+                base_cost_price = position.get('base_cost_price', current_cost_price)
                 
                 # 关键修改：动态成本价计算
                 if sell_type == 'partial' and not profit_triggered:
@@ -2793,7 +2863,8 @@ class PositionManager:
                     highest_price=highest_price,
                     open_date=open_date,
                     stop_loss_price=new_stop_loss_price,
-                    stock_name=stock_name
+                    stock_name=stock_name,
+                    base_cost_price=base_cost_price
                 )
                 
                 if success:
@@ -3195,42 +3266,46 @@ class PositionManager:
                     if latest_data:
                         all_latest_data[stock_code] = latest_data
 
-                # 修复重启后 current_price=0 的问题：若内存 DB 价格为0但行情有效，立即更新
-                prices_to_fix = {}
+                # 用最新行情价格实时更新 df 中的 current_price/market_value/profit_ratio
+                # 修复：不再只针对 current_price=0 的情况，有行情就始终用最新价更新
+                # 这样盘后/重启后第一次 Web 查询即可返回正确盈亏率，无需等待同步线程
+                prices_changed = {}
                 for stock_code, latest_data in all_latest_data.items():
                     fresh_price = latest_data.get('lastPrice', 0)
                     if fresh_price and fresh_price > 0:
                         row = df[df['stock_code'] == stock_code]
                         if not row.empty:
                             db_price = row.iloc[0].get('current_price')
-                            if db_price is None or pd.isna(db_price) or float(db_price) == 0:
-                                prices_to_fix[stock_code] = fresh_price
+                            db_price_val = float(db_price) if (db_price is not None and not pd.isna(db_price)) else 0
 
-                if prices_to_fix:
-                    try:
-                        with self.memory_conn_lock:
-                            for stock_code, fresh_price in prices_to_fix.items():
-                                self.memory_conn.execute(
-                                    "UPDATE positions SET current_price=?, market_value=?*volume, "
-                                    "profit_ratio=CASE WHEN cost_price>0 THEN 100.0*(?-cost_price)/cost_price ELSE 0 END "
-                                    "WHERE stock_code=? AND (current_price IS NULL OR current_price=0)",
-                                    (fresh_price, fresh_price, fresh_price, stock_code))
-                            self.memory_conn.commit()
-                        for stock_code, fresh_price in prices_to_fix.items():
+                            # 始终用最新价更新 df（直接影响本次 API 响应）
                             df.loc[df['stock_code'] == stock_code, 'current_price'] = fresh_price
-                            # 同步更新 market_value = price * volume
                             vol = df.loc[df['stock_code'] == stock_code, 'volume']
                             if not vol.empty:
                                 df.loc[df['stock_code'] == stock_code, 'market_value'] = fresh_price * float(vol.iloc[0])
-                            # 同步更新 profit_ratio = (current_price - cost_price) / cost_price
                             cost = df.loc[df['stock_code'] == stock_code, 'cost_price']
                             if not cost.empty:
                                 cost_val = float(cost.iloc[0])
                                 if cost_val > 0:
                                     df.loc[df['stock_code'] == stock_code, 'profit_ratio'] = round(100 * (fresh_price - cost_val) / cost_val, 2)
-                            logger.debug(f"启动价格修复: {stock_code} current_price 0 -> {fresh_price}")
+
+                            # 当价格与内存 DB 不一致时写回内存 DB（持久化，避免下次查询仍拿到旧值）
+                            if db_price_val == 0 or abs(fresh_price - db_price_val) > 0.001:
+                                prices_changed[stock_code] = fresh_price
+                                logger.debug(f"价格更新: {stock_code} {db_price_val:.2f} -> {fresh_price:.2f}")
+
+                if prices_changed:
+                    try:
+                        with self.memory_conn_lock:
+                            for stock_code, fresh_price in prices_changed.items():
+                                self.memory_conn.execute(
+                                    "UPDATE positions SET current_price=?, market_value=?*volume, "
+                                    "profit_ratio=CASE WHEN cost_price>0 THEN 100.0*(?-cost_price)/cost_price ELSE 0 END "
+                                    "WHERE stock_code=?",
+                                    (fresh_price, fresh_price, fresh_price, stock_code))
+                            self.memory_conn.commit()
                     except Exception as e:
-                        logger.debug(f"启动价格修复失败: {e}")
+                        logger.debug(f"内存DB价格写回失败: {e}")
 
                 # 计算涨跌幅
                 change_percentages = {}
@@ -3318,6 +3393,7 @@ class PositionManager:
                         # 🔧 Fix: 盘前同步可能将 xt_trader 置 None 但不触发 on_disconnected 回调
                         # 此处主动检测 xt_trader 与 qmt_connected 是否一致，确保监控线程能感知断连
                         if (self.qmt_connected and
+                                self.qmt_trader is not None and
                                 hasattr(self.qmt_trader, 'xt_trader') and
                                 (self.qmt_trader.xt_trader is None or self.qmt_trader.xt_trader == '')):
                             logger.warning(
@@ -3333,16 +3409,24 @@ class PositionManager:
                         )
                         if not qmt_ok:
                             consecutive_errors += 1
-                            logger.warning(
-                                f'[MONITOR][非交易时段] QMT 已断连，累计 {consecutive_errors}/'
-                                f'{getattr(config, "QMT_RECONNECT_ON_ERRORS", 3)} 次，将尝试重连'
-                            )
+                            # 检查是否在重连冷却期内，减少警告噪音
+                            cooldown = getattr(config, 'XTQUANT_RECONNECT_INTERVAL', 300)
+                            in_cooldown = (time.time() - self._last_reconnect_time) < cooldown
+
                             if consecutive_errors >= getattr(config, 'QMT_RECONNECT_ON_ERRORS', 3):
+                                # 达到重连阈值，输出ERROR级别日志并尝试重连
                                 logger.error(
                                     f'❌ [MONITOR][非交易时段] 连续 {consecutive_errors} 次断连，触发重连'
                                 )
                                 self._attempt_qmt_reconnect()
                                 consecutive_errors = 0
+                            elif not in_cooldown:
+                                # 非冷却期：输出WARNING提醒用户
+                                logger.warning(
+                                    f'[MONITOR][非交易时段] QMT 已断连，累计 {consecutive_errors}/'
+                                    f'{getattr(config, "QMT_RECONNECT_ON_ERRORS", 3)} 次，将尝试重连'
+                                )
+                            # 冷却期内：仅累计错误，不输出警告（避免日志刷屏）
                         else:
                             if consecutive_errors > 0:
                                 logger.info(
@@ -3350,12 +3434,26 @@ class PositionManager:
                                 )
                             consecutive_errors = 0
                     # ─────────────────────────────────────────────────────────────────────────
-                    # QMT 断连时缩短休眠，让重连检测更及时；连接正常时用标准间隔节省 CPU
+                    # QMT 断连时的休眠策略优化
                     if not config.ENABLE_SIMULATION_MODE and not self.qmt_connected:
-                        sleep_sec = 10
+                        # 检查是否在重连冷却期内
+                        cooldown = getattr(config, 'XTQUANT_RECONNECT_INTERVAL', 300)
+                        time_since_last_reconnect = time.time() - self._last_reconnect_time
+
+                        if time_since_last_reconnect < cooldown:
+                            # 冷却期内：使用较长间隔，减少日志噪音
+                            sleep_sec = min(60, config.MONITOR_NON_TRADE_SLEEP)
+                            logger.debug(
+                                f"非交易时间(第{loop_count}次循环), QMT断连冷却中"
+                                f"(剩余{int(cooldown - time_since_last_reconnect)}秒), 休眠{sleep_sec}秒"
+                            )
+                        else:
+                            # 非冷却期：缩短休眠，让重连检测更及时
+                            sleep_sec = 10
+                            logger.debug(f"非交易时间(第{loop_count}次循环), QMT断连, 休眠{sleep_sec}秒")
                     else:
                         sleep_sec = config.MONITOR_NON_TRADE_SLEEP
-                    logger.debug(f"非交易时间(第{loop_count}次循环), 休眠{sleep_sec}秒")
+                        logger.debug(f"非交易时间(第{loop_count}次循环), 休眠{sleep_sec}秒")
                     time.sleep(sleep_sec)
                     last_loop_time = time.time()
                     continue

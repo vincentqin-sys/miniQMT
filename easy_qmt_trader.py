@@ -7,6 +7,7 @@ import random
 import math
 import json
 import math
+import threading
 import config
 from logger import get_logger
 
@@ -103,8 +104,8 @@ class easy_qmt_trader:
         '''
         简化版的qmt_trder方便大家做策略的开发类的继承
         '''
-        self.xt_trader=''
-        self.acc=''
+        self.xt_trader=None
+        self.acc=None
         self.path=path
         self.session_id=int(self.random_session_id())
         self.account=account
@@ -117,6 +118,7 @@ class easy_qmt_trader:
         self.xtdata = None  # 初始化xtdata属性
         self.xtdata_connected = False  # 初始化连接状态
         self._callback = None  # 保存callback对象，供外部注册trade_callbacks
+        self._connecting = False  # 连接进行中标记，避免误判错误
         logger.info('操作提示: 请登录QMT,选择行情加交易选项,选择极简模式')
 
     def register_trade_callback(self, cb):
@@ -280,16 +282,17 @@ class easy_qmt_trader:
         account_type账户内类型
         '''
         logger.info('正在连接QMT交易接口...')
+        self._connecting = True
 
         # 🔧 Fail-Safe 修复: 先清理旧连接，防止重复调用时资源泄漏
         old_trader = getattr(self, 'xt_trader', None)
-        if old_trader and old_trader != '':
+        if old_trader:
             try:
                 old_trader.stop()
                 logger.info('已停止旧 XtQuantTrader 实例')
             except Exception as e:
                 logger.warning(f'停止旧 XtQuantTrader 时出错 (忽略): {e}')
-            self.xt_trader = ''
+            self.xt_trader = None
 
         # path为mini qmt客户端安装目录下userdata_mini路径
         path = self.path
@@ -307,14 +310,53 @@ class easy_qmt_trader:
         self._callback = callback
         # 启动交易线程
         xt_trader.start()
-        # 建立交易连接，返回0表示连接成功
-        connect_result = xt_trader.connect()
+        # 建立交易连接，返回0表示连接成功（加超时保护，避免卡死）
+        connect_timeout = getattr(config, 'QMT_CONNECT_TIMEOUT', 30)
+        connect_result = None
+        connect_error = None
+
+        def _do_connect():
+            nonlocal connect_result, connect_error
+            try:
+                connect_result = xt_trader.connect()
+            except Exception as e:
+                connect_error = e
+
+        connect_thread = threading.Thread(target=_do_connect, daemon=True)
+        connect_thread.start()
+        connect_thread.join(connect_timeout)
+
+        if connect_thread.is_alive():
+            logger.error(f'QMT连接超时({connect_timeout}秒)，中止本次连接')
+            # 超时：尽量停止本次连接，避免遗留后台线程
+            try:
+                xt_trader.stop()
+                logger.info('已停止超时的 XtQuantTrader 实例')
+            except Exception as e:
+                logger.warning(f'停止超时的 XtQuantTrader 实例出错 (忽略): {e}')
+            self.xt_trader = None
+            self.acc = None
+            self._connecting = False
+            return None
+
+        if connect_error:
+            logger.error(f'QMT连接异常: {connect_error}')
+            try:
+                xt_trader.stop()
+                logger.info('已停止异常的 XtQuantTrader 实例')
+            except Exception as e:
+                logger.warning(f'停止异常的 XtQuantTrader 实例出错 (忽略): {e}')
+            self.xt_trader = None
+            self.acc = None
+            self._connecting = False
+            return None
         if connect_result==0:
             # 对交易回调进行订阅，订阅后可以收到交易主推，返回0表示订阅成功
             subscribe_result = xt_trader.subscribe(acc)
             logger.info(f'QMT交易接口连接成功, 订阅结果={subscribe_result}')
             self.xt_trader=xt_trader
             self.acc=acc
+            self._connecting = False
             return xt_trader,acc
         else:
             logger.error(f'QMT连接失败, 连接结果={connect_result}')
@@ -327,6 +369,7 @@ class easy_qmt_trader:
             # 连接失败：重置为 None，避免 self.xt_trader 停留在 '' 字符串状态
             self.xt_trader = None
             self.acc = None
+            self._connecting = False
             return None
     def order_stock(self,stock_code='600031.SH', order_type=xtconstant.STOCK_BUY,
                     order_volume=100,price_type=xtconstant.FIX_PRICE,price=20,strategy_name='',order_remark=''):
@@ -823,6 +866,13 @@ class easy_qmt_trader:
     def position(self):
         '''对接同花顺持股'''
         try:
+            if getattr(self, '_connecting', False):
+                logger.warning("QMT正在连接中，暂无法获取持仓")
+                columns = ['账号类型', '资金账号', '证券代码', '股票余额', '可用余额',
+                        '成本价', '市值', '选择', '持股天数', '交易状态', '明细',
+                        '证券名称', '冻结数量', '市价', '盈亏', '盈亏比(%)',
+                        '当日买入', '当日卖出']
+                return pd.DataFrame(columns=columns)
             # 🔧 修复：检查xt_trader是否已正确初始化
             if not hasattr(self, 'xt_trader') or self.xt_trader is None or isinstance(self.xt_trader, str):
                 logger_error_msg = f"QMT未连接或连接失败，无法获取持仓。xt_trader类型: {type(self.xt_trader) if hasattr(self, 'xt_trader') else 'undefined'}"
