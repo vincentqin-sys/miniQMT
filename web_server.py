@@ -589,9 +589,11 @@ def save_config():
             db_configs['POSITION_UNIT'] = value
 
         if "firstProfitSell" in config_data:
+            old_profit_ratio = config.INITIAL_TAKE_PROFIT_RATIO
             value = float(config_data["firstProfitSell"]) / 100
             config.INITIAL_TAKE_PROFIT_RATIO = value
             db_configs['INITIAL_TAKE_PROFIT_RATIO'] = value
+            logger.info(f"平仓盈利阈值: {old_profit_ratio*100:.1f}% -> {float(config_data['firstProfitSell']):.1f}%")
 
         if "firstProfitSellEnabled" in config_data:
             value = bool(config_data["firstProfitSellEnabled"])
@@ -605,14 +607,18 @@ def save_config():
 
         if "stopLossBuy" in config_data:
             # 更新第二个网格级别
+            old_stop_loss_buy_ratio = config.BUY_GRID_LEVELS[1]
             ratio = 1 - float(config_data["stopLossBuy"]) / 100
             config.BUY_GRID_LEVELS[1] = ratio
             db_configs['BUY_GRID_LEVEL_1'] = ratio
+            logger.info(f"补仓止损阈值: {(1-old_stop_loss_buy_ratio)*100:.1f}% -> {float(config_data['stopLossBuy']):.1f}%")
 
         if "stockStopLoss" in config_data:
+            old_stop_loss = config.STOP_LOSS_RATIO
             value = -float(config_data["stockStopLoss"]) / 100
             config.STOP_LOSS_RATIO = value
             db_configs['STOP_LOSS_RATIO'] = value
+            logger.info(f"平仓止损比例: {abs(old_stop_loss)*100:.1f}% -> {float(config_data['stockStopLoss']):.1f}%")
 
         if "singleStockMaxPosition" in config_data:
             value = float(config_data["singleStockMaxPosition"])
