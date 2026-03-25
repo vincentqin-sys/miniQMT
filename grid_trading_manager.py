@@ -707,26 +707,30 @@ class GridTradingManager:
         # 保底机制: deviation 检测（第1步）负责极端单边下跌场景的退出保护，
         #           默认 max_deviation=15% 限制了"仅买无卖"阶段的最大回撤风险。
         # 测试文档: 见 test_grid_bugfix_c1.py::TestDesign4StopLossWithoutSell
-        if session.buy_count > 0 and session.sell_count > 0:
+        # 2. 盈亏检测：
+        # - 止盈：仍要求已完成至少1次买入+1次卖出（闭环后再止盈）
+        # - 止损：允许“仅买未卖”阶段触发，防止单边下跌持续买入导致风险扩大
+        # 说明: profit_ratio 基于 max_investment 计算，能反映网格资金回撤幅度
+        # 测试参考: test_grid_exit_profit_loss.py
+        if session.buy_count > 0:
             profit_ratio = session.get_profit_ratio()
             logger.debug(f"[GRID] _check_exit_conditions: 盈亏检测 profit_ratio={profit_ratio*100:.2f}%, "
                         f"target={session.target_profit*100:.2f}%, stop_loss={session.stop_loss*100:.2f}%, "
                         f"buy_count={session.buy_count}, sell_count={session.sell_count}")
 
-            # 止盈检测
-            if profit_ratio >= session.target_profit:
+            # 止盈检测（需要买卖配对）
+            if session.sell_count > 0 and profit_ratio >= session.target_profit:
                 logger.info(f"[GRID] {session.stock_code} 达到目标盈利{profit_ratio*100:.2f}%, "
                            f"buy_count={session.buy_count}, sell_count={session.sell_count}")
                 return 'target_profit'
 
-            # 止损检测
+            # 止损检测（允许仅买未卖阶段触发）
             if profit_ratio <= session.stop_loss:
                 logger.warning(f"[GRID] {session.stock_code} 触发止损{profit_ratio*100:.2f}%, "
                               f"buy_count={session.buy_count}, sell_count={session.sell_count}")
                 return 'stop_loss'
         else:
-            logger.debug(f"[GRID] _check_exit_conditions: 未完成配对操作(buy_count={session.buy_count}, "
-                        f"sell_count={session.sell_count}), 跳过盈亏检测")
+            logger.debug(f"[GRID] _check_exit_conditions: 未有买入记录, 跳过盈亏检测")
 
         # 3. 时间限制
         if session.end_time:

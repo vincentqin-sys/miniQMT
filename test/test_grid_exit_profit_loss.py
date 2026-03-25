@@ -19,7 +19,7 @@
 - max_investment: 10000元
 - 测试场景:
   1. 无交易: buy_count=0, sell_count=0, 不触发
-  2. 仅买入: buy_count=1, sell_count=0, 不触发
+  2. 仅买入: buy_count=1, sell_count=0, 允许触发止损
   3. 仅卖出: buy_count=0, sell_count=1, 不触发
   4. 配对且盈利9%: 不触发
   5. 配对且盈利10%: 触发止盈
@@ -282,14 +282,14 @@ class TestGridExitProfitLoss(unittest.TestCase):
         self._check_exit_and_record('无交易', session, expected_reason=None)
 
     def test_2_only_buy(self):
-        """测试2: 仅买入, 不触发退出"""
+        """测试2: 仅买入阶段，允许触发止损"""
         session = self._create_test_session(
             buy_count=1,
             sell_count=0,
             total_buy_amount=2500,
             total_sell_amount=0
         )
-        self._check_exit_and_record('仅买入', session, expected_reason=None)
+        self._check_exit_and_record('仅买入(止损可触发)', session, expected_reason='stop_loss')
 
     def test_3_only_sell(self):
         """测试3: 仅卖出, 不触发退出"""

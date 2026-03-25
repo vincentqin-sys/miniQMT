@@ -3591,6 +3591,7 @@ class PositionManager:
 
                     # 使用统一的信号检查函数 (传入价格,避免内部重复调用API)
                     signal_type, signal_info = self.check_trading_signals(stock_code, current_price)
+                    force_grid_stop = False
 
                     with self.signal_lock:
                         if signal_type:
@@ -3599,6 +3600,7 @@ class PositionManager:
                             # 🔑 信号优先级体系: stop_loss > grid_* > take_profit_*
                             # 止损信号优先级最高,可以覆盖任何信号
                             if signal_type == 'stop_loss':
+                                force_grid_stop = True
                                 self.latest_signals[stock_code] = {
                                     'type': signal_type,
                                     'info': signal_info,
@@ -3626,6 +3628,17 @@ class PositionManager:
 
                     # ===== 网格交易信号检测 (使用已获取的价格) =====
                     # 网格信号检测应该独立于止盈止损信号
+                    # ===== ç¡¬ä¼åçº§ï¼stop_loss è§¦åæ¶ç«å³å¼ºå¶éåºç½æ ¼ä¼è¯ï¼éå¤æ§è¡ï¼ =====
+                    if force_grid_stop and self.grid_manager and config.ENABLE_GRID_TRADING:
+                        try:
+                            normalized = self.grid_manager._normalize_code(stock_code)
+                            session = self.grid_manager.sessions.get(normalized)
+                            if session and session.status == 'active':
+                                self.grid_manager.stop_grid_session(session.id, 'stop_loss')
+                                logger.warning(f"[GRID] {stock_code} æ­¢æè§¦åï¼å·²å¼ºå¶åæ­¢ç½æ ¼ä¼è¯ session_id={session.id}")
+                        except Exception as e:
+                            logger.warning(f"[GRID] {stock_code} æ­¢æè§¦åå¼ºå¶åä¼è¯å¤±è´¥(å¯å¿½ç¥): {e}")
+
                     if self.grid_manager and config.ENABLE_GRID_TRADING:
                         try:
                             grid_signal = self.grid_manager.check_grid_signals(stock_code, current_price)
