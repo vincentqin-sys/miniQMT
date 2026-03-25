@@ -332,7 +332,7 @@ class IndicatorCalculator:
                 
                 # 检查是否满足买入条件
                 if macd_cross and ma_alignment:
-                    logger.info(f"{stock_code} 满足买入条件: MACD金叉 + 均线多头排列")
+                    logger.debug(f"{stock_code} 满足买入条件: MACD金叉 + 均线多头排列")
                     return True
             
             return False

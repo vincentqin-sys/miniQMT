@@ -481,20 +481,22 @@ class TradingStrategy:
     #         logger.error(f"执行 {stock_code} 的动态止盈策略时出错: {str(e)}")
     #         return False
     
-    def execute_buy_strategy(self, stock_code):
+    def execute_buy_strategy(self, stock_code, buy_signal=None):
         """
         执行买入策略
-        
+
         参数:
         stock_code (str): 股票代码
-        
+        buy_signal (bool): 外部传入的信号结果，避免重复调用 check_buy_signal；为 None 时内部自行检测
+
         返回:
         bool: 是否执行成功
         """
         try:
-            # 检查是否有买入信号
-            buy_signal = self.indicator_calculator.check_buy_signal(stock_code)
-            
+            # 优先使用外部传入的信号，避免重复调用 check_buy_signal
+            if buy_signal is None:
+                buy_signal = self.indicator_calculator.check_buy_signal(stock_code)
+
             if buy_signal:
                 # 检查是否已处理过该信号
                 signal_key = f"buy_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
@@ -514,6 +516,7 @@ class TradingStrategy:
 
                     # 🔑 注意: execute_buy_strategy()仅处理技术指标买入信号的首次建仓
                     # 补仓策略已由position_manager.check_add_position_signal()独立处理
+                    self.processed_signals.add(signal_key)  # 日内去重，防止每次循环都打印
                     logger.info(f"{stock_code} 已有持仓，技术指标买入信号不触发补仓（补仓由独立策略处理）")
                     return False
                 else:
@@ -809,10 +812,10 @@ class TradingStrategy:
             buy_signal = self.indicator_calculator.check_buy_signal(stock_code)
             if buy_signal:
                 logger.info(f"{stock_code} 检测到买入信号")
-                
-                # 只有在启用自动交易时才执行
+
+                # 只有在启用自动交易时才执行；传入已有信号避免重复调用
                 if config.ENABLE_AUTO_TRADING:
-                    if self.execute_buy_strategy(stock_code):
+                    if self.execute_buy_strategy(stock_code, buy_signal=buy_signal):
                         logger.info(f"{stock_code} 执行买入策略成功")
                         return
                 else:
