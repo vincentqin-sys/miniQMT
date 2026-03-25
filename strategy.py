@@ -541,31 +541,34 @@ class TradingStrategy:
             logger.error(f"执行 {stock_code} 的买入策略时出错: {str(e)}")
             return False
     
-    def execute_sell_strategy(self, stock_code):
+    def execute_sell_strategy(self, stock_code, sell_signal=None):
         """
         执行卖出策略
-        
+
         参数:
         stock_code (str): 股票代码
-        
+        sell_signal (bool): 外部传入的信号结果，避免重复调用 check_sell_signal；为 None 时内部自行检测
+
         返回:
         bool: 是否执行成功
         """
         try:
-            # 检查是否有卖出信号
-            sell_signal = self.indicator_calculator.check_sell_signal(stock_code)
-            
+            # 优先使用外部传入的信号，避免重复调用 check_sell_signal
+            if sell_signal is None:
+                sell_signal = self.indicator_calculator.check_sell_signal(stock_code)
+
             if sell_signal:
                 # 检查是否已处理过该信号
                 signal_key = f"sell_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
                 if signal_key in self.processed_signals:
                     logger.debug(f"{stock_code} 卖出信号已处理，跳过")
                     return False
-                
+
                 # 获取持仓
                 position = self.position_manager.get_position(stock_code)
                 if not position:
                     logger.warning(f"未持有 {stock_code}，无法执行卖出策略")
+                    self.processed_signals.add(signal_key)  # 无持仓也记录，防止重复打印
                     return False
                 
                 volume = position['volume']
@@ -811,28 +814,39 @@ class TradingStrategy:
             # 5. 检查技术指标买入信号
             buy_signal = self.indicator_calculator.check_buy_signal(stock_code)
             if buy_signal:
-                logger.info(f"{stock_code} 检测到买入信号")
-
-                # 只有在启用自动交易时才执行；传入已有信号避免重复调用
-                if config.ENABLE_AUTO_TRADING:
-                    if self.execute_buy_strategy(stock_code, buy_signal=buy_signal):
-                        logger.info(f"{stock_code} 执行买入策略成功")
-                        return
+                signal_key = f"buy_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+                if signal_key in self.processed_signals:
+                    logger.debug(f"{stock_code} 买入信号今日已处理，跳过")
                 else:
-                    logger.info(f"{stock_code} 检测到买入信号，但自动交易已关闭")
+                    logger.info(f"{stock_code} 检测到买入信号")
+
+                    # 只有在启用自动交易时才执行；传入已有信号避免重复调用
+                    if config.ENABLE_AUTO_TRADING:
+                        if self.execute_buy_strategy(stock_code, buy_signal=buy_signal):
+                            logger.info(f"{stock_code} 执行买入策略成功")
+                            return
+                    else:
+                        # 自动交易关闭时也加入已处理集合，防止每循环都打印
+                        self.processed_signals.add(signal_key)
+                        logger.info(f"{stock_code} 检测到买入信号，但自动交易已关闭")
             
             # 6. 检查技术指标卖出信号
             sell_signal = self.indicator_calculator.check_sell_signal(stock_code)
             if sell_signal:
-                logger.info(f"{stock_code} 检测到卖出信号")
-                
-                # 只有在启用自动交易时才执行
-                if config.ENABLE_AUTO_TRADING:
-                    if self.execute_sell_strategy(stock_code):
-                        logger.info(f"{stock_code} 执行卖出策略成功")
-                        return
+                sell_key = f"sell_{stock_code}_{datetime.now().strftime('%Y%m%d')}"
+                if sell_key in self.processed_signals:
+                    logger.debug(f"{stock_code} 卖出信号今日已处理，跳过")
                 else:
-                    logger.info(f"{stock_code} 检测到卖出信号，但自动交易已关闭")
+                    logger.info(f"{stock_code} 检测到卖出信号")
+
+                    # 只有在启用自动交易时才执行
+                    if config.ENABLE_AUTO_TRADING:
+                        if self.execute_sell_strategy(stock_code, sell_signal=sell_signal):
+                            logger.info(f"{stock_code} 执行卖出策略成功")
+                            return
+                    else:
+                        self.processed_signals.add(sell_key)
+                        logger.info(f"{stock_code} 检测到卖出信号，但自动交易已关闭")
             
             logger.debug(f"{stock_code} 没有检测到交易信号")
             
