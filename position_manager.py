@@ -4060,19 +4060,34 @@ class PositionManager:
             logger.error(f"重新挂单失败: {str(e)}")
 
     def init_grid_manager(self, trading_executor):
-        """初始化网格交易管理器"""
+        """初始化网格交易管理器
+
+        双重检查保护: 防止多线程并发调用时重复创建 GridTradingManager 实例。
+        场景: Web API 延迟初始化 + Flask 多线程模式下，两个请求可能同时
+        判断 grid_manager is None 并都进入创建流程。
+        """
         if not config.ENABLE_GRID_TRADING:
             logger.info("网格交易功能未启用")
             return
 
+        # 双重检查: 已初始化则跳过
+        if self.grid_manager is not None:
+            logger.debug("网格交易管理器已存在，跳过重复初始化")
+            return
+
         try:
             from grid_trading_manager import GridTradingManager
-            self.grid_manager = GridTradingManager(
+            new_manager = GridTradingManager(
                 self.db_manager,
                 self,
                 trading_executor
             )
-            logger.info("网格交易管理器初始化完成")
+            # 赋值前再次检查，防止竞态条件下覆盖已有实例
+            if self.grid_manager is None:
+                self.grid_manager = new_manager
+                logger.info("网格交易管理器初始化完成")
+            else:
+                logger.warning("网格交易管理器已被并发初始化，丢弃重复创建的实例")
         except Exception as e:
             logger.error(f"网格交易管理器初始化失败: {str(e)}")
 

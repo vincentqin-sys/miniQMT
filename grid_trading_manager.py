@@ -631,16 +631,11 @@ class GridTradingManager:
             del self.trackers[session_id]
             logger.debug(f"[GRID] _stop_grid_session_unlocked: 从trackers中移除 session_id={session_id}")
 
-        # 清除冷却记录 (支持两种键格式)
-        cooldown_keys_by_session = [k for k in self.level_cooldowns.keys() if k[0] == session_id]
-        cooldown_keys_by_stock = [k for k in self.level_cooldowns.keys() if k[0] == stock_code]
-        if cooldown_keys_by_session:
-            logger.debug(f"[GRID] _stop_grid_session_unlocked: 清除 {len(cooldown_keys_by_session)} 个session_id档位冷却记录")
-        for key in cooldown_keys_by_session:
-            del self.level_cooldowns[key]
-        if cooldown_keys_by_stock:
-            logger.debug(f"[GRID] _stop_grid_session_unlocked: 清除 {len(cooldown_keys_by_stock)} 个stock_code档位冷却记录")
-        for key in cooldown_keys_by_stock:
+        # 清除冷却记录 (键格式为 (session_id: int, level_price: float))
+        cooldown_keys = [k for k in self.level_cooldowns.keys() if k[0] == session_id]
+        if cooldown_keys:
+            logger.debug(f"[GRID] _stop_grid_session_unlocked: 清除 {len(cooldown_keys)} 个档位冷却记录")
+        for key in cooldown_keys:
             del self.level_cooldowns[key]
 
         # 触发数据版本更新
@@ -699,19 +694,12 @@ class GridTradingManager:
                 )
                 return 'deviation'
 
-        # 2. 盈亏检测：严格配对模式 - 必须至少完成1次买入+1次卖出
-        # DESIGN-4说明: 此处有意要求 sell_count > 0 才进入 P&L 检测。
-        # 原因: 在仅有买入、尚无卖出的阶段，P&L = -total_buy / max_investment（负数），
-        #       若在此阶段检查 stop_loss，可能在完成第一笔买入后即因单档亏损触发退出，
-        #       与网格"持仓等待反弹"的核心设计相悖。
-        # 保底机制: deviation 检测（第1步）负责极端单边下跌场景的退出保护，
-        #           默认 max_deviation=15% 限制了"仅买无卖"阶段的最大回撤风险。
-        # 测试文档: 见 test_grid_bugfix_c1.py::TestDesign4StopLossWithoutSell
         # 2. 盈亏检测：
-        # - 止盈：仍要求已完成至少1次买入+1次卖出（闭环后再止盈）
-        # - 止损：允许“仅买未卖”阶段触发，防止单边下跌持续买入导致风险扩大
+        # - 止盈：要求已完成至少1次买入+1次卖出（闭环后再止盈）
+        # - 止损：允许”仅买未卖”阶段触发，防止单边下跌持续买入导致风险扩大
         # 说明: profit_ratio 基于 max_investment 计算，能反映网格资金回撤幅度
-        # 测试参考: test_grid_exit_profit_loss.py
+        # 保底机制: deviation 检测（第1步）负责极端单边下跌场景的退出保护
+        # 测试参考: test_grid_exit_profit_loss.py, test_grid_bugfix_c1.py::TestDesign4StopLossWithoutSell
         if session.buy_count > 0:
             profit_ratio = session.get_profit_ratio()
             logger.debug(f"[GRID] _check_exit_conditions: 盈亏检测 profit_ratio={profit_ratio*100:.2f}%, "
@@ -950,10 +938,15 @@ class GridTradingManager:
         else:
             logger.warning(f"[GRID] _rebuild_grid: session_id={session.id} 无对应的PriceTracker")
 
-        # 更新数据库
-        self.db.update_grid_session(session.id, {
-            'current_center_price': trade_price
-        })
+        # 更新数据库（独立保护: 失败时不回滚内存状态，交易统计已由RISK-1/RISK-2保障）
+        # 网格中心价不一致会在下一笔交易时自动覆盖，风险可控
+        try:
+            self.db.update_grid_session(session.id, {
+                'current_center_price': trade_price
+            })
+        except Exception as db_err:
+            logger.error(f"[GRID] _rebuild_grid: DB更新center_price失败"
+                        f"(内存已更新,下一笔交易时会覆盖): {db_err}")
         logger.debug(f"[GRID] _rebuild_grid: 数据库更新完成")
 
         levels = session.get_grid_levels()
@@ -1310,11 +1303,16 @@ class GridTradingManager:
             trade_id = f"GRID_SIM_SELL_{int(time.time()*1000)}"
             logger.info(f"[GRID] _execute_grid_sell: [模拟]网格卖出: {stock_code}, 数量={sell_volume}, 价格={trigger_price:.2f}, trade_id={trade_id}")
         else:
-            # 实盘卖出
-            logger.debug(f"[GRID] _execute_grid_sell: 调用executor.sell_stock 实盘卖出")
+            # V1-SELL修复: 卖出同样传入 price=trigger_price，与买入 V1 修复对称。
+            # 若不传 price，executor 使用买三价（市价）成交，实际成交价可能偏离 trigger_price，
+            # 导致 sell_amount = sell_volume * trigger_price 与实际成交金额不一致，
+            # current_investment 回收额偏差累积，profit_ratio 统计失真。
+            logger.debug(f"[GRID] _execute_grid_sell: 调用executor.sell_stock 实盘卖出 "
+                         f"volume={sell_volume}, price={trigger_price:.2f}")
             result = self.executor.sell_stock(
                 stock_code=stock_code,
                 volume=sell_volume,
+                price=trigger_price,
                 strategy=config.GRID_STRATEGY_NAME
             )
             if not result:

@@ -55,7 +55,7 @@ class MockTradingExecutor:
         logger.info(f"[MOCK] BUY executed: {stock_code}, amount={amount:.2f}, strategy={strategy}")
         return {'success': True, 'order_id': trade_id}
 
-    def sell_stock(self, stock_code, volume, strategy):
+    def sell_stock(self, stock_code, volume, price=None, strategy="grid"):
         self.order_counter += 1
         trade_id = f"SIM_SELL_{self.order_counter}"
         self.trade_history.append({

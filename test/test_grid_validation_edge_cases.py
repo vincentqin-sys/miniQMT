@@ -37,7 +37,7 @@ class MockTradingExecutor:
     def buy_stock(self, stock_code, amount, strategy):
         return {'order_id': 'MOCK_BUY_123', 'success': True}
 
-    def sell_stock(self, stock_code, volume, strategy):
+    def sell_stock(self, stock_code, volume, price=None, strategy="grid"):
         return {'order_id': 'MOCK_SELL_123', 'success': True}
 
 

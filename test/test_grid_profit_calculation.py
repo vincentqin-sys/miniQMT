@@ -42,7 +42,7 @@ class TestGridProfitCalculation(TestBase):
             def buy_stock(self, stock_code, amount, strategy='grid'):
                 return f"MOCK_BUY_{stock_code}"
 
-            def sell_stock(self, stock_code, volume, strategy='grid'):
+            def sell_stock(self, stock_code, volume, price=None, strategy='grid'):
                 return f"MOCK_SELL_{stock_code}"
 
         return MockTradingExecutor()

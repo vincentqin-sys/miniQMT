@@ -187,27 +187,27 @@ class MockTradingExecutor:
 
         return {'order_id': trade_id, 'volume': actual_volume, 'price': actual_price}
 
-    def sell_stock(self, stock_code, volume, strategy="grid"):
+    def sell_stock(self, stock_code, volume, price=None, strategy="grid"):
         """模拟卖出"""
-        # 使用当前价格(简化处理)
-        price = 10.0
+        # V1-SELL修复: 接受 price 参数，优先使用传入价格
+        sell_price = price if price is not None else 10.0
 
         trade_id = self.qmt_trader.order_stock(
-            None, stock_code, 24, volume, price, strategy_name=strategy
+            None, stock_code, 24, volume, sell_price, strategy_name=strategy
         )
 
         self.trades.append({
             'stock_code': stock_code,
             'trade_type': 'SELL',
             'volume': volume,
-            'price': price,
-            'amount': volume * price,
+            'price': sell_price,
+            'amount': volume * sell_price,
             'strategy': strategy,
             'trade_id': trade_id,
             'timestamp': datetime.now().isoformat()
         })
 
-        return {'order_id': trade_id, 'volume': volume, 'price': price}
+        return {'order_id': trade_id, 'volume': volume, 'price': sell_price}
 
 
 class MockPositionManager:

@@ -327,8 +327,11 @@ class DatabaseManager:
                 # 如果start_time是字符串，解析它
                 if isinstance(start_time_str, str):
                     # 处理ISO格式的日期字符串
+                    # 时区安全: 统一剥离时区信息转为 naive datetime，避免与 datetime.now() 比较时 TypeError
                     if 'T' in start_time_str:
                         start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                        if start_time.tzinfo is not None:
+                            start_time = start_time.replace(tzinfo=None)
                     else:
                         # 如果只是日期,转为datetime
                         start_time = datetime.fromisoformat(start_time_str)
@@ -638,9 +641,27 @@ class DatabaseManager:
             return dict(row) if row else None
 
     def delete_grid_template(self, template_name: str):
-        """删除网格配置模板"""
+        """删除网格配置模板
+
+        引用保护: 拒绝删除正在被活跃网格会话引用的模板，防止悬空引用。
+        """
         with self.lock:
+            # 检查是否有活跃会话正在引用此模板
             cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT id, stock_code FROM grid_trading_sessions
+                WHERE template_name=? AND status='active'
+                LIMIT 1
+            """, (template_name,))
+            active_ref = cursor.fetchone()
+            if active_ref:
+                ref_dict = dict(active_ref)
+                raise ValueError(
+                    f"模板'{template_name}'正在被活跃会话"
+                    f"(id={ref_dict['id']}, {ref_dict['stock_code']})引用，"
+                    f"请先停止该会话再删除模板"
+                )
+
             cursor.execute("""
                 DELETE FROM grid_config_templates WHERE template_name=?
             """, (template_name,))

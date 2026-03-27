@@ -346,7 +346,7 @@ class TestGridSessionLifecycle(unittest.TestCase):
         normalized_stock = self.grid_manager._normalize_code(self.test_stock)
         session_obj = self.grid_manager.sessions[normalized_stock]
         self.grid_manager.trackers[session_obj.id] = Mock()
-        self.grid_manager.level_cooldowns[(self.test_stock, 'lower')] = time.time()
+        self.grid_manager.level_cooldowns[(session_obj.id, 9.50)] = time.time()
 
         # 停止会话
         self.grid_manager.stop_grid_session(session_id, "manual")
@@ -355,8 +355,8 @@ class TestGridSessionLifecycle(unittest.TestCase):
         self.assertNotIn(normalized_stock, self.grid_manager.sessions)
         self.assertNotIn(session_id, self.grid_manager.trackers)
 
-        # 验证cooldowns也被清理（如果实现了的话）
-        cooldown_keys = [k for k in self.grid_manager.level_cooldowns.keys() if k[0] == self.test_stock]
+        # 验证cooldowns也被清理（键格式为 (session_id: int, level_price: float)）
+        cooldown_keys = [k for k in self.grid_manager.level_cooldowns.keys() if k[0] == session_id]
         self.assertEqual(len(cooldown_keys), 0)
 
         print(f"[OK] 测试通过: 内存清理完成")
