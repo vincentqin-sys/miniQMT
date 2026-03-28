@@ -189,6 +189,14 @@
       ],
       "priority": "critical"
     },
+    "grid_full_range_coverage": {
+      "name": "网格交易全区间覆盖测试",
+      "description": "系统性覆盖全网格价格区间的买入卖出逻辑：11个测试套件（A档位区间/B买入执行/C卖出执行/D多轮交易/E资金管理/F冷却机制/G异常鲁棒性/H退出条件/I极端行情/J端到端流程/K参数组合），共114个测试用例，确保100%符合设计规范并提供异常兜底保护",
+      "modules": [
+        "test.test_grid_full_range_coverage"
+      ],
+      "priority": "critical"
+    },
     "grid_simulation": {
       "name": "网格交易价格模拟测试",
       "description": "使用自动化脚本模拟持仓数据波动，验证网格交易是否能正确触发买卖信号（30个测试用例）",
@@ -216,7 +224,8 @@
         "test.test_premarket_xttrader_reinit",
         "test.test_max_investment_strict",
         "test.test_stop_loss_price_calc",
-        "test.test_grid_qa_gap_supplement"
+        "test.test_grid_qa_gap_supplement",
+        "test.test_grid_full_range_coverage"
       ],
       "priority": "critical"
     }
