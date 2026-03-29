@@ -1,4 +1,4 @@
-# miniQMT 系统架构文档
+﻿# miniQMT 系统架构文档
 
 本文档详细说明 miniQMT 量化交易系统的架构设计、模块关系和数据流。
 
@@ -366,7 +366,7 @@ while not stop_flag:
     active_sessions = get_active_grid_sessions()
     for session in active_sessions:
         if check_grid_exit_condition(session):
-            execute_grid_exit(session)
+            stop_grid_session(session)
 
     time.sleep(5)
 ```
@@ -637,7 +637,7 @@ def validate_trading_signal(self, stock_code, signal_type, signal_info):
 | **首次止盈** | `profit_ratio >= INITIAL_TAKE_PROFIT_RATIO` | 卖出60% | 高 | 持仓监控线程 |
 | **动态止盈** | `current_price <= 动态止盈位` | 全仓卖出 | 中 | 持仓监控线程 |
 | **网格买入** | `price <= 网格触发价` | 按配额买入 | 低 | 网格交易线程 |
-| **网格退出** | 满足止盈/止损/超时条件 | 清空网格持仓 | 中 | 网格交易线程 |
+| **网格退出** | 满足止盈/止损/超时条件 | 停止网格会话 | 中 | 网格交易线程 |
 
 ### 信号冲突处理
 
@@ -729,17 +729,11 @@ sequenceDiagram
 
     loop 每个活跃会话
         GT->>GDB: get_session_summary()
-        GDB-->>GT: 总成本/总市值/盈亏
+        GDB-->>GT: 总成本/总卖出/现金流盈亏
         GT->>GT: check_grid_exit_condition()
         alt 满足退出条件
-            GT->>PM: get_position()
-            PM-->>GT: 当前持仓
-            GT->>TE: sell_stock(全部卖出)
-            TE->>QMT: 下单
-            QMT-->>TE: order_id
-            TE-->>GT: 卖出成功
-            GT->>GDB: add_grid_trade(SELL)
-            GT->>GDB: update_session_status(EXITED)
+            GT->>GT: stop_grid_session(reason)
+            GT->>GDB: update_session_status(STOPPED)
         end
     end
 ```
@@ -755,6 +749,8 @@ sequenceDiagram
 | 2 | **止损** | 仅买入后即可 | `profit_ratio <= stop_loss` (仅需 `buy_count > 0`) | -10% | 允许"仅买未卖"阶段触发，防止单边下跌风险扩大 |
 | 3 | **超时** | 任意阶段 | `now > end_time` | 7天 | 会话运行时长超限 |
 | 4 | **持仓清空** | 任意阶段 | `volume == 0` | - | 持仓被外部清空（止盈止损策略卖出） |
+
+**说明**: 网格退出仅停止会话与信号，不强制清仓；持仓由其它策略或人工处理。
 
 **止盈与止损的非对称设计**（DESIGN-4）:
 - **止盈要求买卖配对**：避免在首次买入后立即因单档亏损触发错误止盈
@@ -794,14 +790,11 @@ total_cost = sum([trade.price * trade.volume for trade in buy_trades])
 # 已卖出收益
 sold_revenue = sum([trade.price * trade.volume for trade in sell_trades])
 
-# 持仓市值
-holding_value = current_price * holding_volume
+# 现金流盈亏（不包含未卖出持仓市值）
+cash_profit = sold_revenue - total_cost
 
-# 总盈亏
-total_profit = sold_revenue + holding_value - total_cost
-
-# 盈亏比例
-total_profit_ratio = total_profit / total_cost
+# 盈亏比例（退出判断口径，基于最大投入）
+profit_ratio = cash_profit / max_investment
 ```
 
 ### 网格买卖信号触发逻辑
@@ -1338,3 +1331,10 @@ logger.info(f"检测到止盈信号: {stock_code}")  # 关键事件
 | v1.2 | 2026-03-13 | 新增 QMT Fail-Safe 重连架构；XtQuantManager 三级健康监控 |
 | v1.1 | 2026-02-01 | 新增无人值守运行架构；线程自愈机制 |
 | v1.0 | 2026-01-24 | 初始版本 |
+
+
+
+
+
+
+

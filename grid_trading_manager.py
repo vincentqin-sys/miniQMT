@@ -1,4 +1,4 @@
-"""
+﻿"""
 网格交易管理器模块
 
 提供网格交易的核心功能:
@@ -210,6 +210,15 @@ class PriceTracker:
 
 class GridTradingManager:
     """网格交易管理器"""
+
+    @staticmethod
+    def _extract_order_id(result) -> str:
+        """兼容 executor 返回 dict/str 的订单号"""
+        if isinstance(result, dict):
+            return result.get('order_id', '')
+        if isinstance(result, str):
+            return result
+        return ''
 
     def __init__(self, db_manager, position_manager, trading_executor):
         self.db = db_manager
@@ -1160,7 +1169,7 @@ class GridTradingManager:
             if not result:
                 logger.error(f"[GRID] _execute_grid_buy: 实盘网格买入失败: {stock_code}")
                 return False
-            trade_id = result.get('order_id', '')
+            trade_id = self._extract_order_id(result)
             logger.info(f"[GRID] _execute_grid_buy: 实盘网格买入成功: {stock_code}, trade_id={trade_id}")
 
         # BUG-C1修复: 下单成功后立即记录冷却时间，防止DB写入失败时重复下单。
@@ -1342,7 +1351,7 @@ class GridTradingManager:
             if not result:
                 logger.error(f"[GRID] _execute_grid_sell: 实盘网格卖出失败: {stock_code}")
                 return False
-            trade_id = result.get('order_id', '')
+            trade_id = self._extract_order_id(result)
             logger.info(f"[GRID] _execute_grid_sell: 实盘网格卖出成功: {stock_code}, trade_id={trade_id}")
 
         # A-4修复（BUG-C1对称）: 下单成功后立即记录卖出冷却时间，防止DB写入失败时重复下单。
@@ -1455,3 +1464,7 @@ class GridTradingManager:
     def get_trade_history(self, session_id: int, limit=50, offset=0) -> list:
         """获取交易历史"""
         return self.db.get_grid_trades(session_id, limit, offset)
+
+
+
+
