@@ -41,6 +41,23 @@ stop_event = threading.Event()
 system_start_time = None  # 系统启动时间
 heartbeat_thread = None  # 心跳日志线程
 
+# ── spinner（旋转指示器）──
+_spinner_stop = threading.Event()
+_spinner_thread = None
+
+def _spinner_worker():
+    """在终端同一行滚动显示 |/-\\ 旋转符号，表示程序正在运行。
+    直接写 stdout，不进入日志文件；logger 输出的完整行会自然覆盖该符号。"""
+    chars = r'|/-\\'
+    i = 0
+    while not _spinner_stop.is_set():
+        sys.stdout.write('\r' + chars[i % 4] + ' ')
+        sys.stdout.flush()
+        i += 1
+        _spinner_stop.wait(0.25)
+    sys.stdout.write('\r  \r')  # 退出时清除残留字符
+    sys.stdout.flush()
+
 def signal_handler(sig, frame):
     """信号处理函数，用于捕获退出信号"""
     logger.info("收到退出信号")
@@ -187,8 +204,8 @@ def heartbeat_logger():
             time.sleep(60)  # 出错后等待一分钟再继续
 
 def start_heartbeat_logger():
-    """启动心跳日志线程"""
-    global heartbeat_thread, system_start_time
+    """启动心跳日志线程及终端旋转指示器"""
+    global heartbeat_thread, system_start_time, _spinner_thread
 
     if not config.ENABLE_HEARTBEAT_LOG:
         logger.info("心跳日志未启用 (ENABLE_HEARTBEAT_LOG=False)")
@@ -197,11 +214,19 @@ def start_heartbeat_logger():
     system_start_time = datetime.now()
     heartbeat_thread = threading.Thread(target=heartbeat_logger, daemon=True, name="HeartbeatLogger")
     heartbeat_thread.start()
+
+    _spinner_stop.clear()
+    _spinner_thread = threading.Thread(target=_spinner_worker, daemon=True, name="SpinnerThread")
+    _spinner_thread.start()
+
     logger.info(f"✅ 心跳日志已启动 (间隔:{config.HEARTBEAT_INTERVAL}秒)")
 
 def stop_heartbeat_logger():
-    """停止心跳日志线程"""
-    global heartbeat_thread
+    """停止心跳日志线程及旋转指示器"""
+    global heartbeat_thread, _spinner_thread
+    _spinner_stop.set()
+    if _spinner_thread and _spinner_thread.is_alive():
+        _spinner_thread.join(timeout=1)
     if heartbeat_thread and heartbeat_thread.is_alive():
         logger.info("停止心跳日志线程")
         stop_event.set()

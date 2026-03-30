@@ -119,6 +119,11 @@ class SafeStreamHandler(logging.StreamHandler):
     """
     def emit(self, record):
         try:
+            # 写日志前清除 spinner 可能留在行首的旋转字符（仅 TTY）
+            stream = self.stream
+            if hasattr(stream, 'isatty') and stream.isatty():
+                stream.write('\r\033[K')
+                stream.flush()
             super().emit(record)
         except (ValueError, OSError, AttributeError):
             # 忽略以下错误:
