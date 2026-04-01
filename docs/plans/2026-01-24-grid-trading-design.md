@@ -259,7 +259,10 @@ if deviation > max_deviation:  # 默认0.15 (15%)
 
 **2. 目标盈利退出**
 ```python
-profit_ratio = (total_sell_amount - total_buy_amount) / total_buy_amount
+# True P&L 口径（已实现）
+open_grid_volume = total_buy_volume - total_sell_volume
+true_pnl = (total_sell_amount - total_buy_amount) + open_grid_volume * current_price
+profit_ratio = true_pnl / max_investment
 if profit_ratio >= target_profit:  # 默认0.10 (10%)
     stop_reason = 'target_profit'
 ```
@@ -268,6 +271,17 @@ if profit_ratio >= target_profit:  # 默认0.10 (10%)
 ```python
 if profit_ratio <= stop_loss:  # 默认-0.10 (-10%)
     stop_reason = 'stop_loss'
+```
+
+**True P&L 降级路径（向后兼容旧会话）**
+```python
+if 没有 volume 追踪数据:
+    if position_volume > 0 and current_price > 0:
+        # 以持仓市值为分母，避免单次买入即触发止损
+        profit_ratio = (total_sell_amount - total_buy_amount) / (position_volume * current_price)
+    else:
+        # 无持仓快照时，回退到 max_investment 口径
+        profit_ratio = (total_sell_amount - total_buy_amount) / max_investment
 ```
 
 **4. 时间限制退出**

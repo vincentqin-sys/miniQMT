@@ -197,6 +197,14 @@
       ],
       "priority": "critical"
     },
+    "grid_true_pnl": {
+      "name": "网格交易True P&L盈亏率测试",
+      "description": "验证True P&L(真实盈亏)计算：单次买入不误触止损、DESIGN-4多次买入+暴跌触发止损、完整买卖对=已实现利润、部分对含未实现盈利、旧会话降级路径兼容",
+      "modules": [
+        "test.test_grid_true_pnl"
+      ],
+      "priority": "critical"
+    },
     "grid_simulation": {
       "name": "网格交易价格模拟测试",
       "description": "使用自动化脚本模拟持仓数据波动，验证网格交易是否能正确触发买卖信号（30个测试用例）",
@@ -225,7 +233,8 @@
         "test.test_max_investment_strict",
         "test.test_stop_loss_price_calc",
         "test.test_grid_qa_gap_supplement",
-        "test.test_grid_full_range_coverage"
+        "test.test_grid_full_range_coverage",
+        "test.test_grid_true_pnl"
       ],
       "priority": "critical"
     }

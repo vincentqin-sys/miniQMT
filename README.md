@@ -229,6 +229,18 @@ GRID_STOP_LOSS_RATIO = -0.10                 # 止损-10%
 GRID_DEFAULT_DURATION_DAYS = 7               # 默认运行7天
 ```
 
+**网格盈亏口径说明（退出条件使用）**
+```text
+True P&L = (total_sell_amount - total_buy_amount) + open_grid_volume * current_price
+open_grid_volume = total_buy_volume - total_sell_volume
+profit_ratio = True P&L / max_investment
+```
+降级路径（旧会话无 volume 数据）：
+```text
+若有持仓快照: profit_ratio = (total_sell_amount - total_buy_amount) / (position_volume * current_price)
+否则回退:     profit_ratio = (total_sell_amount - total_buy_amount) / max_investment
+```
+
 ### 委托单管理配置
 
 ```python

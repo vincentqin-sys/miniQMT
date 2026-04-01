@@ -729,7 +729,7 @@ sequenceDiagram
 
     loop 每个活跃会话
         GT->>GDB: get_session_summary()
-        GDB-->>GT: 总成本/总卖出/现金流盈亏
+        GDB-->>GT: 总买入/总卖出/交易统计
         GT->>GT: check_grid_exit_condition()
         alt 满足退出条件
             GT->>GT: stop_grid_session(reason)
@@ -745,8 +745,8 @@ sequenceDiagram
 | 优先级 | 条件 | 触发阶段 | 公式 | 默认值 | 说明 |
 |--------|------|---------|------|--------|------|
 | 1 | **偏离度** | 任意阶段 | `max(drift_dev, market_dev) > max_deviation` | 15% | 双重偏离：网格漂移偏离 + 市价偏离，取最大值 |
-| 2 | **止盈** | 买卖配对后 | `profit_ratio >= target_profit` (需 `sell_count > 0`) | 8% | 必须至少完成1笔买入+1笔卖出后才检测 |
-| 2 | **止损** | 仅买入后即可 | `profit_ratio <= stop_loss` (仅需 `buy_count > 0`) | -10% | 允许"仅买未卖"阶段触发，防止单边下跌风险扩大 |
+| 2 | **止盈** | 买卖配对后 | `profit_ratio >= target_profit` (True P&L，需 `sell_count > 0`) | 8% | 必须至少完成1笔买入+1笔卖出后才检测 |
+| 2 | **止损** | 仅买入后即可 | `profit_ratio <= stop_loss` (True P&L，需 `buy_count > 0`) | -10% | 允许"仅买未卖"阶段触发，防止单边下跌风险扩大 |
 | 3 | **超时** | 任意阶段 | `now > end_time` | 7天 | 会话运行时长超限 |
 | 4 | **持仓清空** | 任意阶段 | `volume == 0` | - | 持仓被外部清空（止盈止损策略卖出） |
 
@@ -784,17 +784,25 @@ single_profit = sell_revenue - buy_cost
 #### 会话总盈亏
 
 ```python
-# 总买入成本
-total_cost = sum([trade.price * trade.volume for trade in buy_trades])
-
-# 已卖出收益
-sold_revenue = sum([trade.price * trade.volume for trade in sell_trades])
-
-# 现金流盈亏（不包含未卖出持仓市值）
-cash_profit = sold_revenue - total_cost
+# True P&L = Realized + Unrealized
+open_grid_volume = total_buy_volume - total_sell_volume
+realized = total_sell_amount - total_buy_amount
+unrealized = open_grid_volume * current_price
+true_pnl = realized + unrealized
 
 # 盈亏比例（退出判断口径，基于最大投入）
-profit_ratio = cash_profit / max_investment
+profit_ratio = true_pnl / max_investment
+```
+
+**降级路径（旧会话无 volume 数据）**:
+```python
+if no_volume_data:
+    if position_volume > 0 and current_price > 0:
+        # 以持仓市值为分母，避免单次买入即触发止损
+        profit_ratio = (total_sell_amount - total_buy_amount) / (position_volume * current_price)
+    else:
+        # 无持仓快照时回退到 max_investment 口径
+        profit_ratio = (total_sell_amount - total_buy_amount) / max_investment
 ```
 
 ### 网格买卖信号触发逻辑
