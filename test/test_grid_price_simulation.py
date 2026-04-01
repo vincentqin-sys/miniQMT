@@ -1034,6 +1034,8 @@ class TestGridPriceSimulation(unittest.TestCase):
             session.sell_count = 1
             session.total_buy_amount = 9000.0
             session.total_sell_amount = 9100.0
+            session.total_buy_volume = 900   # ~900 shares at ~10.00
+            session.total_sell_volume = 900
 
             profit = session.get_profit_ratio()
             print(f"  当前盈亏率={profit*100:.2f}% (目标=1%)")
@@ -1075,6 +1077,8 @@ class TestGridPriceSimulation(unittest.TestCase):
             session.sell_count = 1
             session.total_buy_amount = 10000.0
             session.total_sell_amount = 9870.0
+            session.total_buy_volume = 1000
+            session.total_sell_volume = 1000
 
             profit = session.get_profit_ratio()
             print(f"  当前盈亏率={profit*100:.2f}% (止损线=-1%)")

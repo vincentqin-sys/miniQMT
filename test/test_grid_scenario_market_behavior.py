@@ -351,8 +351,11 @@ class TestGridScenarioMarketBehavior(unittest.TestCase):
 
         print(f'\n场景3(多区间震荡): buys={buys}, sells={sells}, total={total_trades}, exited={session_exited}')
 
-        self.assertGreaterEqual(total_trades, 20,
-            f'震荡市场应触发至少20次交易操作, 实际: {total_trades}次 (买{buys}+卖{sells})')
+        # True P&L 计入未实现盈利: 第10次买入后, open_volume=200股,
+        # 价格涨至10.00时 unrealized gain 推 true_pnl 超过 10%,
+        # session 在第10次卖出之前即触发 target_profit 退出(正确行为)
+        self.assertGreaterEqual(total_trades, 19,
+            f'震荡市场应触发至少19次交易操作, 实际: {total_trades}次 (买{buys}+卖{sells})')
         self.assertGreater(buys, 0,
             '震荡市场应包含买入操作')
         self.assertGreater(sells, 0,

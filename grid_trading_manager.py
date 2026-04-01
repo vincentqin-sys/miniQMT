@@ -53,6 +53,8 @@ class GridSession:
     sell_count: int = 0
     total_buy_amount: float = 0.0
     total_sell_amount: float = 0.0
+    total_buy_volume: int = 0
+    total_sell_volume: int = 0
 
     # 时间戳
     start_time: Optional[datetime] = None
@@ -93,6 +95,84 @@ class GridSession:
                     f"buy={self.total_buy_amount:.2f}, grid_profit={grid_profit:.2f}, "
                     f"max_investment={self.max_investment:.2f}, ratio={ratio*100:.2f}%")
         return ratio
+
+    def get_profit_ratio_by_market_value(self, position_volume: float, current_price: float) -> float:
+        """
+        以持仓市值为分母计算网格盈亏率（供 _check_exit_conditions 使用）
+
+        公式: (total_sell_amount - total_buy_amount) / (position_volume * current_price)
+
+        与 get_profit_ratio() 的区别:
+          get_profit_ratio()      分母 = max_investment（固定）
+          本方法                  分母 = 持仓市值（动态）
+
+        动机: max_investment 通常远小于持仓市值，导致单次买入的净现金流出占比就
+              超过 stop_loss 阈值（生产 Bug 2026-04-01：-19.04% ≤ -10% 即触发）。
+              改用持仓市值后，止损衡量的是"网格净流出相对于整体持仓的风险占比"，
+              单次买入不再误触发，多次买入叠加价格下跌时仍会正确触发（DESIGN-4保留）。
+
+        降级条件: position_volume ≤ 0 或 current_price ≤ 0 → 降级为 get_profit_ratio()
+        测试参考: test/test_grid_profit_ratio_fix.py
+        """
+        if position_volume > 0 and current_price > 0:
+            position_market_value = position_volume * current_price
+            grid_profit = self.total_sell_amount - self.total_buy_amount
+            ratio = grid_profit / position_market_value
+            logger.debug(
+                f"[GRID] get_profit_ratio_by_market_value: stock_code={self.stock_code}, "
+                f"grid_profit={grid_profit:.2f}, volume={position_volume:.0f}, "
+                f"price={current_price:.2f}, market_value={position_market_value:.2f}, "
+                f"ratio={ratio*100:.2f}%"
+            )
+            return ratio
+        # 降级：无有效持仓数据，回退到 max_investment 分母
+        logger.debug(
+            f"[GRID] get_profit_ratio_by_market_value: 无有效持仓(volume={position_volume}, "
+            f"price={current_price:.2f}), 降级为get_profit_ratio()"
+        )
+        return self.get_profit_ratio()
+
+    def get_true_pnl_ratio(self, current_price: float, position_volume: float = 0) -> float:
+        """
+        True P&L ratio -- industry best practice (realized + unrealized)
+
+        Formula:
+          open_grid_volume = total_buy_volume - total_sell_volume
+          true_pnl = (total_sell - total_buy) + open_grid_volume * current_price
+          ratio = true_pnl / max_investment
+
+        At purchase moment: true_pnl = 0 (cash out = position value)
+        After price drop:   true_pnl < 0 (reflects actual loss)
+        After round-trip:   true_pnl = realized profit (open_vol = 0)
+
+        Fallback:
+          If no volume tracking data (old sessions), uses
+          get_profit_ratio_by_market_value() or get_profit_ratio()
+        """
+        if self.total_buy_volume > 0 or self.total_sell_volume > 0:
+            open_volume = self.total_buy_volume - self.total_sell_volume
+            realized = self.total_sell_amount - self.total_buy_amount
+            unrealized = open_volume * current_price
+            true_pnl = realized + unrealized
+            if self.max_investment <= 0:
+                logger.debug(
+                    f"[GRID] get_true_pnl_ratio: max_investment=0, return 0.0"
+                )
+                return 0.0
+            ratio = true_pnl / self.max_investment
+            logger.debug(
+                f"[GRID] get_true_pnl_ratio: stock_code={self.stock_code}, "
+                f"realized={realized:.2f}, unrealized={unrealized:.2f}, "
+                f"true_pnl={true_pnl:.2f}, open_vol={open_volume}, "
+                f"price={current_price:.2f}, ratio={ratio*100:.2f}%"
+            )
+            return ratio
+        # Fallback: old session without volume tracking
+        logger.debug(
+            f"[GRID] get_true_pnl_ratio: no volume data, "
+            f"fallback to get_profit_ratio_by_market_value"
+        )
+        return self.get_profit_ratio_by_market_value(position_volume, current_price)
 
     def get_grid_profit(self) -> float:
         """
@@ -348,6 +428,8 @@ class GridTradingManager:
                         sell_count=session_dict['sell_count'],
                         total_buy_amount=session_dict['total_buy_amount'],
                         total_sell_amount=session_dict['total_sell_amount'],
+                        total_buy_volume=session_dict.get('total_buy_volume', 0),
+                        total_sell_volume=session_dict.get('total_sell_volume', 0),
                         start_time=datetime.fromisoformat(session_dict['start_time']),
                         end_time=end_time
                     )
@@ -704,15 +786,26 @@ class GridTradingManager:
                 )
                 return 'deviation'
 
-        # 2. 盈亏检测：
+        # 2. 盈亏检测:
         # - 止盈：要求已完成至少1次买入+1次卖出（闭环后再止盈）
-        # - 止损：允许”仅买未卖”阶段触发，防止单边下跌持续买入导致风险扩大
-        # 说明: profit_ratio 基于 max_investment 计算，能反映网格资金回撤幅度
+        # - 止损：允许"仅买未卖"阶段触发，防止单边下跌持续买入导致风险扩大
+        # True P&L 公式: (sell-buy) + open_grid_vol * price, denom=max_investment
+        # 降级: 旧 session 无 volume 数据时自动回退到 market_value 分母
         # 保底机制: deviation 检测（第1步）负责极端单边下跌场景的退出保护
         # 测试参考: test_grid_exit_profit_loss.py, test_grid_bugfix_c1.py::TestDesign4StopLossWithoutSell
+        #           test_grid_profit_ratio_fix.py, test_grid_true_pnl.py（True P&L验证）
         if session.buy_count > 0:
-            profit_ratio = session.get_profit_ratio()
-            logger.debug(f"[GRID] _check_exit_conditions: 盈亏检测 profit_ratio={profit_ratio*100:.2f}%, "
+            _position_volume = position_snapshot.get('volume', 0) if position_snapshot else 0
+            profit_ratio = session.get_true_pnl_ratio(current_price, _position_volume)
+            _open_vol = session.total_buy_volume - session.total_sell_volume
+            if session.total_buy_volume > 0 or session.total_sell_volume > 0:
+                _pnl_label = f"true_pnl(open_vol={_open_vol}, price={current_price:.2f})"
+            elif _position_volume > 0:
+                _pnl_label = f"fallback_mv({_position_volume:.0f}x{current_price:.2f})"
+            else:
+                _pnl_label = f"fallback_mi({session.max_investment:.0f})"
+            logger.debug(f"[GRID] _check_exit_conditions: profit_ratio={profit_ratio*100:.2f}% "
+                        f"method={_pnl_label}, "
                         f"target={session.target_profit*100:.2f}%, stop_loss={session.stop_loss*100:.2f}%, "
                         f"buy_count={session.buy_count}, sell_count={session.sell_count}")
 
@@ -1186,11 +1279,13 @@ class GridTradingManager:
         old_trade_count = session.trade_count
         old_buy_count = session.buy_count
         old_total_buy = session.total_buy_amount
+        old_total_buy_vol = session.total_buy_volume
         old_investment = session.current_investment
 
         session.trade_count += 1
         session.buy_count += 1
         session.total_buy_amount += actual_amount
+        session.total_buy_volume += volume
         session.current_investment += actual_amount
 
         # ── 后置兜底校验（V3）：确保累加后不超限 ─────────────────────────────────────
@@ -1206,6 +1301,7 @@ class GridTradingManager:
         logger.debug(f"[GRID] _execute_grid_buy: 更新会话统计 trade_count {old_trade_count}->{session.trade_count}, "
                     f"buy_count {old_buy_count}->{session.buy_count}, "
                     f"total_buy {old_total_buy:.2f}->{session.total_buy_amount:.2f}, "
+                    f"buy_vol {old_total_buy_vol}->{session.total_buy_volume}, "
                     f"investment {old_investment:.2f}->{session.current_investment:.2f}")
 
         # 5. 记录交易
@@ -1236,6 +1332,7 @@ class GridTradingManager:
                 'trade_count': session.trade_count,
                 'buy_count': session.buy_count,
                 'total_buy_amount': session.total_buy_amount,
+                'total_buy_volume': session.total_buy_volume,
                 'current_investment': session.current_investment
             })
         except Exception as db_err:
@@ -1243,6 +1340,7 @@ class GridTradingManager:
             session.trade_count = old_trade_count
             session.buy_count = old_buy_count
             session.total_buy_amount = old_total_buy
+            session.total_buy_volume = old_total_buy_vol
             session.current_investment = old_investment
             return False
 
@@ -1364,11 +1462,13 @@ class GridTradingManager:
         old_trade_count = session.trade_count
         old_sell_count = session.sell_count
         old_total_sell = session.total_sell_amount
+        old_total_sell_vol = session.total_sell_volume
         old_investment = session.current_investment
 
         session.trade_count += 1
         session.sell_count += 1
         session.total_sell_amount += sell_amount
+        session.total_sell_volume += sell_volume
         # A-1修复: 卖出后按实际成交价（trigger_price）回收资金，而非按成本价（cost_price）。
         # 原因：current_investment 代表"已占用的资金额度"（以买入成交额累加），
         # 卖出时释放额度应以实际成交额为准（sell_amount = sell_volume * trigger_price），
@@ -1381,6 +1481,7 @@ class GridTradingManager:
         logger.debug(f"[GRID] _execute_grid_sell: 更新会话统计 trade_count {old_trade_count}->{session.trade_count}, "
                     f"sell_count {old_sell_count}->{session.sell_count}, "
                     f"total_sell {old_total_sell:.2f}->{session.total_sell_amount:.2f}, "
+                    f"sell_vol {old_total_sell_vol}->{session.total_sell_volume}, "
                     f"investment {old_investment:.2f}->{session.current_investment:.2f}, recovered={sell_amount:.2f}(trigger_price×vol)")
 
         # 5. 记录交易
@@ -1411,6 +1512,7 @@ class GridTradingManager:
                 'trade_count': session.trade_count,
                 'sell_count': session.sell_count,
                 'total_sell_amount': session.total_sell_amount,
+                'total_sell_volume': session.total_sell_volume,
                 'current_investment': session.current_investment
             })
         except Exception as db_err:
@@ -1418,6 +1520,7 @@ class GridTradingManager:
             session.trade_count = old_trade_count
             session.sell_count = old_sell_count
             session.total_sell_amount = old_total_sell
+            session.total_sell_volume = old_total_sell_vol
             session.current_investment = old_investment
             return False
 

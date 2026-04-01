@@ -189,6 +189,25 @@ class DatabaseManager:
             else:
                 raise
 
+        # True P&L volume tracking fields
+        try:
+            cursor.execute("ALTER TABLE grid_trading_sessions ADD COLUMN total_buy_volume INTEGER DEFAULT 0")
+            logger.info("数据库迁移: 添加 total_buy_volume 字段")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                pass
+            else:
+                raise
+
+        try:
+            cursor.execute("ALTER TABLE grid_trading_sessions ADD COLUMN total_sell_volume INTEGER DEFAULT 0")
+            logger.info("数据库迁移: 添加 total_sell_volume 字段")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                pass
+            else:
+                raise
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_grid_sessions_stock
             ON grid_trading_sessions(stock_code)
@@ -402,6 +421,7 @@ class DatabaseManager:
             'status', 'current_center_price', 'current_investment',
             'trade_count', 'buy_count', 'sell_count',
             'total_buy_amount', 'total_sell_amount',
+            'total_buy_volume', 'total_sell_volume',
             'stop_time', 'stop_reason', 'risk_level', 'template_name'
         }
         invalid_fields = set(updates.keys()) - _ALLOWED_SESSION_FIELDS
