@@ -1681,11 +1681,11 @@ def start_grid_trading():
         frontend_config = data.get('config', {})
 
         # DEBUG: 详细的请求数据日志
-        logger.info(f"[DEBUG] 收到的原始data keys: {list(data.keys())}")
+        logger.debug(f"[DEBUG] 收到的原始data keys: {list(data.keys())}")
         logger.info(f"[DEBUG] frontend_config存在: {bool(frontend_config)}")
         if frontend_config:
-            logger.info(f"[DEBUG] frontend_config keys: {list(frontend_config.keys())}")
-            logger.info(f"[DEBUG] frontend_config内容: {frontend_config}")
+            logger.debug(f"[DEBUG] frontend_config keys: {list(frontend_config.keys())}")
+            logger.debug(f"[DEBUG] frontend_config内容: {frontend_config}")
         else:
             logger.warning("[DEBUG] frontend_config为空，将使用默认值")
 
@@ -1741,7 +1741,7 @@ def start_grid_trading():
 
         # DEBUG: 参数校验前日志
         logger.info(f"[DEBUG] 开始参数校验...")
-        logger.info(f"[DEBUG] user_config['max_investment']: {user_config.get('max_investment')} (type: {type(user_config.get('max_investment'))})")
+        logger.debug(f"[DEBUG] user_config['max_investment']: {user_config.get('max_investment')} (type: {type(user_config.get('max_investment'))})")
 
         # 参数校验
         is_valid, result = validate_grid_config(user_config)
@@ -1755,7 +1755,7 @@ def start_grid_trading():
                 'details': result
             }), 400
 
-        logger.info(f"[DEBUG] 参数校验通过，validated_config: {result}")
+        logger.debug(f"[DEBUG] 参数校验通过，validated_config: {result}")
 
         # 检查是否有旧session(用于返回警告消息)
         grid_manager = position_manager.grid_manager

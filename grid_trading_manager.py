@@ -520,7 +520,7 @@ class GridTradingManager:
         """
         logger.info(f"[GRID] start_grid_session: ========== 开始启动会话 ==========")
         logger.info(f"[GRID] start_grid_session: stock_code={stock_code}")
-        logger.info(f"[GRID] start_grid_session: user_config={user_config}")
+        logger.debug(f"[GRID] start_grid_session: user_config={user_config}")
         # 统一 sessions 字典 key（去除交易所后缀）
         stock_code_key = self._normalize_code(stock_code)
         logger.info(f"[GRID] start_grid_session: stock_code_key={stock_code_key}")
