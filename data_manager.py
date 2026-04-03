@@ -60,6 +60,9 @@ class DataManager:
         # 已订阅的股票代码列表
         self.subscribed_stocks = []
 
+        # 股票名称缓存（在 __init__ 中预先创建，避免运行时懒加载触发 baostock）
+        self.stock_names_cache = {}
+
         # xtdata断连自动重连控制
         self._xtdata_reconnect_lock = threading.Lock()
         self._xtdata_last_reconnect_time = 0.0
@@ -627,7 +630,56 @@ class DataManager:
                 return None
             logger.error(f"下载 {stock_code} 的历史数据时出错: {str(e)}")
             return None
-        
+
+    def warm_stock_name_cache(self, stock_codes=None):
+        """
+        预热股票名称缓存，从本地数据源（QMT持仓、xtdata）批量填充，避免运行时触发 baostock。
+
+        参数:
+            stock_codes: 要预热的股票代码列表，None 时使用 config.STOCK_POOL
+        """
+        if stock_codes is None:
+            stock_codes = list(config.STOCK_POOL)
+
+        filled = 0
+
+        # 来源1：从 QMT 持仓数据获取名称（一次调用覆盖所有持仓股）
+        try:
+            from position_manager import get_position_manager
+            pm = get_position_manager()
+            if hasattr(pm, 'qmt_trader') and pm.qmt_trader:
+                positions_df = pm.qmt_trader.position()
+                if not positions_df.empty and '证券代码' in positions_df.columns and '证券名称' in positions_df.columns:
+                    for _, row in positions_df.iterrows():
+                        code_simple = str(row['证券代码'])
+                        name = str(row['证券名称'])
+                        # 匹配带后缀（如 301399.SZ）和不带后缀（301399）两种格式
+                        for sc in stock_codes:
+                            if sc.split('.')[0] == code_simple and sc not in self.stock_names_cache:
+                                self.stock_names_cache[sc] = name
+                                filled += 1
+        except Exception as e:
+            logger.debug(f"warm_stock_name_cache: QMT持仓来源跳过: {e}")
+
+        # 来源2：从 xtdata instrument_detail 获取剩余未命中的股票名称
+        missing = [sc for sc in stock_codes if sc not in self.stock_names_cache]
+        if missing and self.xt is not None:
+            try:
+                for sc in missing:
+                    try:
+                        detail = self.xt.get_instrument_detail(sc)
+                        if detail and isinstance(detail, dict):
+                            name = detail.get('InstrumentName') or detail.get('instrumentName') or detail.get('name')
+                            if name:
+                                self.stock_names_cache[sc] = name
+                                filled += 1
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.debug(f"warm_stock_name_cache: xtdata来源跳过: {e}")
+
+        logger.info(f"股票名称缓存预热完成: 共 {len(stock_codes)} 只，成功填充 {filled} 只，缓存大小 {len(self.stock_names_cache)}")
+
     def get_stock_name(self, stock_code):
         """
         获取股票名称
@@ -639,14 +691,10 @@ class DataManager:
         str: 股票名称，如果未找到则返回股票代码
         """
         try:
-            # 初始化名称缓存（如果不存在）
-            if not hasattr(self, 'stock_names_cache'):
-                self.stock_names_cache = {}
-                
             # 尝试从缓存获取名称
             if stock_code in self.stock_names_cache:
                 return self.stock_names_cache[stock_code]
-            
+
             # 从QMT交易接口获取（仅实盘模式）
             try:
                 # 模拟模式下跳过实盘API调用
@@ -671,14 +719,17 @@ class DataManager:
                 logger.debug(f"通过qmt_trader获取股票名称出错: {str(e)}")
 
             # 尝试使用baostock查询
+            # 注意：baostock的login/logout输出必须全部被抑制，否则logout会干扰xtdata的网络连接
             try:
                 import baostock as bs
                 with suppress_stdout_stderr():
                     lg = bs.login()
                 if lg.error_code != '0':
                     logger.warning(f"baostock登录失败: {lg.error_msg}")
+                    with suppress_stdout_stderr():
+                        bs.logout()
                     return stock_code
-                
+
                 # 调整股票代码格式
                 if '.' in stock_code:
                     formatted_code = stock_code  # 假设已经是bs格式
@@ -688,30 +739,32 @@ class DataManager:
                         formatted_code = f"sh.{stock_code}"
                     else:
                         formatted_code = f"sz.{stock_code}"
-                
+
                 # 查询股票基本信息
                 rs = bs.query_stock_basic(code=formatted_code)
                 if rs.error_code != '0':
                     logger.warning(f"查询股票基本信息失败: {rs.error_msg}")
-                    bs.logout()
+                    with suppress_stdout_stderr():
+                        bs.logout()
                     return stock_code
-                
+
                 # 获取结果
                 data_list = []
                 while (rs.error_code == '0') & rs.next():
                     data_list.append(rs.get_row_data())
-                bs.logout()
-                
+                with suppress_stdout_stderr():
+                    bs.logout()
+
                 if data_list:
                     # 股票名称通常是结果的第二列
                     stock_name = data_list[0][1] if len(data_list[0]) > 1 else stock_code
-                    
+
                     # 保存到缓存
                     self.stock_names_cache[stock_code] = stock_name
                     return stock_name
-                
+
                 return stock_code
-                
+
             except ImportError:
                 logger.warning("未安装baostock，无法获取股票名称")
                 return stock_code

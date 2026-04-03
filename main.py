@@ -152,6 +152,9 @@ def init_system():
     trading_executor = get_trading_executor()
     trading_strategy = get_trading_strategy()
 
+    # 预热股票名称缓存，避免首次交易时触发 baostock 导致 xtdata 断连
+    data_manager.warm_stock_name_cache()
+
     logger.info("✓ 系统初始化完成")
     return data_manager, indicator_calculator, position_manager, trading_executor, trading_strategy
 
