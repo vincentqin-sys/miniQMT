@@ -337,7 +337,7 @@ class TradingStrategy:
                         logger.error(f"[状态标记] {stock_code} profit_triggered标记失败")
                         return False            
                 else:
-                    logger.error(f"[实盘交易] {stock_code} 首次止盈卖出委托下达失败")
+                    logger.error(f"[E_ORDER_SELL_101] {stock_code} 首次止盈卖出委托下达失败，原因: trading_executor返回None (可能是ENABLE_ALLOW_SELL=False、持仓不足或QMT连接异常)，本次信号已标记为未处理，下次循环将自动重试")
                     return False
                 
         except Exception as e:
@@ -400,7 +400,7 @@ class TradingStrategy:
                     logger.info(f"[实盘交易] {stock_code} 止盈全仓卖出委托已下达，委托号: {order_id}")
                     return True
                 else:
-                    logger.error(f"[实盘交易] {stock_code} 全仓止盈卖出委托下达失败")
+                    logger.error(f"[E_ORDER_SELL_102] {stock_code} 全仓止盈卖出委托下达失败，原因: trading_executor返回None (可能是ENABLE_ALLOW_SELL=False、持仓不足或QMT连接异常)，本次信号保留，将在下个策略循环重试(最多3次/分钟窗口)")
                     return False
                 
             return False  # 暂时返回False，表示未执行实盘交易
@@ -920,7 +920,7 @@ class TradingStrategy:
         try:
             # 手动交易不检查ENABLE_AUTO_TRADING，但要检查ENABLE_ALLOW_BUY
             if not config.ENABLE_ALLOW_BUY:
-                logger.warning(f"系统当前不允许买入操作")
+                logger.warning(f"[E_ALLOW_BUY_001] 手动买入 {stock_code} 被拒绝 (ENABLE_ALLOW_BUY=False)，请在配置管理器中开启买入开关后重试")
                 return None
 
             # 根据交易模式选择策略标识
@@ -947,7 +947,7 @@ class TradingStrategy:
         try:
             # 手动交易不检查ENABLE_AUTO_TRADING，但要检查ENABLE_ALLOW_SELL
             if not config.ENABLE_ALLOW_SELL:
-                logger.warning(f"系统当前不允许卖出操作")
+                logger.warning(f"[E_ALLOW_SELL_001] 手动卖出 {stock_code} 被拒绝 (ENABLE_ALLOW_SELL=False)，请在配置管理器中开启卖出开关后重试")
                 return None
 
             # 根据交易模式选择策略标识

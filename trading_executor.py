@@ -679,7 +679,7 @@ class TradingExecutor:
             if is_buy:
                 # 检查是否允许买入
                 if hasattr(config, 'ENABLE_ALLOW_BUY') and not config.ENABLE_ALLOW_BUY:
-                    error_msg = "系统当前不允许买入操作"
+                    error_msg = "[E_ALLOW_BUY_001] 系统当前不允许买入操作 (ENABLE_ALLOW_BUY=False)，请检查配置管理器或手动开启买入开关"
                     return False, error_msg
                 
                 # 计算所需资金
@@ -692,7 +692,7 @@ class TradingExecutor:
             else:
                 # 检查是否允许卖出
                 if hasattr(config, 'ENABLE_ALLOW_SELL') and not config.ENABLE_ALLOW_SELL:
-                    error_msg = "系统当前不允许卖出操作"
+                    error_msg = "[E_ALLOW_SELL_001] 系统当前不允许卖出操作 (ENABLE_ALLOW_SELL=False)，请检查配置管理器或手动开启卖出开关"
                     return False, error_msg
                 
                 # 获取持仓信息
@@ -844,7 +844,7 @@ class TradingExecutor:
                 
                 # 检查买入权限 - 在模拟模式下放宽限制
                 if hasattr(config, 'ENABLE_ALLOW_BUY') and not config.ENABLE_ALLOW_BUY and not is_simulation:
-                    logger.warning("系统当前不允许买入操作")
+                    logger.warning("[E_ALLOW_BUY_001] 系统当前不允许买入操作 (ENABLE_ALLOW_BUY=False)，请检查配置管理器或手动开启买入开关")
                     return None
 
                 # 如果未提供价格，获取卖三价
@@ -994,16 +994,16 @@ class TradingExecutor:
                                     self.callbacks[order_id] = callback
                             break
                         else:
-                            logger.warning(f"买入 {formatted_stock_code} 下单失败，尝试重试 ({retry_count + 1}/{max_retries})")
+                            logger.warning(f"[E_ORDER_BUY_002] 买入 {formatted_stock_code} 下单失败 (order_id=None)，将在1秒后重试 ({retry_count + 1}/{max_retries})，原因: QMT返回空委托号，可能是行情未就绪或账户限制")
                             retry_count += 1
                             time.sleep(1)  # 等待1秒再重试
                     except Exception as e:
-                        logger.error(f"买入 {formatted_stock_code} 时出错: {str(e)}，尝试重试 ({retry_count + 1}/{max_retries})")
+                        logger.error(f"[E_ORDER_BUY_003] 买入 {formatted_stock_code} 发生异常: {str(e)}，将在1秒后重试 ({retry_count + 1}/{max_retries})")
                         retry_count += 1
                         time.sleep(1)  # 等待1秒再重试
                 
                 if not order_id:
-                    logger.error(f"买入 {formatted_stock_code} 经过 {max_retries} 次尝试后仍然失败")
+                    logger.error(f"[E_ORDER_BUY_099] 买入 {formatted_stock_code} 经过 {max_retries} 次重试后仍然失败，已放弃。建议: 检查QMT连接状态、账户资金是否充足、以及网络是否正常")
                     return None
                 
                 # 注册回调
@@ -1075,7 +1075,7 @@ class TradingExecutor:
                 
                 # 检查卖出权限
                 if hasattr(config, 'ENABLE_ALLOW_SELL') and not config.ENABLE_ALLOW_SELL and not is_simulation:
-                    logger.warning("系统当前不允许卖出操作")
+                    logger.warning("[E_ALLOW_SELL_001] 系统当前不允许卖出操作 (ENABLE_ALLOW_SELL=False)，请检查配置管理器或手动开启卖出开关")
                     return None
                 
                 # 如果未提供价格，获取买三价（提高成交概率）
@@ -1261,17 +1261,17 @@ class TradingExecutor:
 
                             break
                         else:
-                            logger.warning(f"卖出 {formatted_stock_code} 下单失败，尝试重试 ({retry_count + 1}/{max_retries})")
+                            logger.warning(f"[E_ORDER_SELL_002] 卖出 {formatted_stock_code} 下单失败 (order_id=None)，将在1秒后重试 ({retry_count + 1}/{max_retries})，原因: QMT返回空委托号，可能是持仓不足或账户限制")
                             retry_count += 1
                             time.sleep(1)
                             
                     except Exception as e:
-                        logger.error(f"卖出 {formatted_stock_code} 时出错: {str(e)}，尝试重试 ({retry_count + 1}/{max_retries})")
+                        logger.error(f"[E_ORDER_SELL_003] 卖出 {formatted_stock_code} 发生异常: {str(e)}，将在1秒后重试 ({retry_count + 1}/{max_retries})")
                         retry_count += 1
                         time.sleep(1)
                 
                 if not order_id:
-                    logger.error(f"卖出 {formatted_stock_code} 经过 {max_retries} 次尝试后仍然失败")
+                    logger.error(f"[E_ORDER_SELL_099] 卖出 {formatted_stock_code} 经过 {max_retries} 次重试后仍然失败，已放弃。建议: 检查QMT连接状态、持仓是否可用、是否有未成交委托单占用可卖数量")
                     return None
                 
                 # 注册回调

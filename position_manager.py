@@ -3840,14 +3840,16 @@ class PositionManager:
             submit_time = order_info['submit_time']
             elapsed = (datetime.now() - submit_time).total_seconds() / 60
 
-            logger.warning(f"⏰ {stock_code} 委托单超时: order_id={order_id}, "
-                         f"信号类型={signal_type}, 已等待{elapsed:.1f}分钟")
+            logger.warning(f"⏰ [E_ORDER_TIMEOUT_001] {stock_code} 委托单超时: order_id={order_id}, "
+                         f"信号类型={signal_type}, 已等待{elapsed:.1f}分钟 (超时阈值={config.PENDING_ORDER_TIMEOUT_MINUTES}分钟)，"
+                         f"将查询当前状态并决定是否自动撤单")
 
             # 查询委托单当前状态
             order_status = self._query_order_status(stock_code, order_id)
 
             if order_status is None:
-                logger.error(f"❌ 无法查询委托单状态: {stock_code} {order_id}")
+                logger.error(f"❌ [E_ORDER_TIMEOUT_004] 无法查询委托单状态: {stock_code} order_id={order_id}，"
+                             f"QMT连接可能异常，请人工登录QMT客户端确认委托状态并手动处理")
                 # 从跟踪列表移除
                 with self.pending_orders_lock:
                     self.pending_orders.pop(stock_code, None)
@@ -3862,7 +3864,8 @@ class PositionManager:
 
             # 如果是未成交状态，执行撤单
             if order_status in [48, 49, 50, 55]:  # 未成交状态
-                logger.warning(f"🚨 {stock_code} 委托单超时未成交，准备撤单...")
+                logger.warning(f"🚨 [E_ORDER_TIMEOUT_002] {stock_code} 委托单超时未成交 (状态={order_status})，"
+                               f"原因可能是: 价格偏离、流动性不足或交易所限制，准备自动撤单...")
 
                 # 执行撤单
                 cancel_result = self._cancel_order(stock_code, order_id)
@@ -3872,17 +3875,21 @@ class PositionManager:
 
                     # 如果配置了自动重新挂单
                     if config.PENDING_ORDER_AUTO_REORDER:
-                        logger.info(f"🔄 {stock_code} 准备重新挂单...")
+                        logger.info(f"🔄 [REORDER] {stock_code} PENDING_ORDER_AUTO_REORDER=True，将以最新价重新挂单 (价格模式: {config.PENDING_ORDER_REORDER_PRICE_MODE})...")
                         self._reorder_after_cancel(stock_code, signal_type, signal_info)
+                    else:
+                        logger.warning(f"⚠️ [REORDER] {stock_code} PENDING_ORDER_AUTO_REORDER=False，撤单后不自动重挂，"
+                                       f"请人工确认是否需要手动补单 (信号类型={signal_type}，委托号={order_id})")
 
                     # 从跟踪列表移除
                     with self.pending_orders_lock:
                         self.pending_orders.pop(stock_code, None)
                 else:
-                    logger.error(f"❌ {stock_code} 委托单撤销失败: {order_id}，保留跟踪等待下次重试")
+                    logger.error(f"❌ [E_ORDER_TIMEOUT_003] {stock_code} 自动撤单失败: order_id={order_id}，"
+                                 f"请人工介入处理：登录QMT客户端手动撤销该委托，并确认持仓状态后视情况补单")
             else:
                 # 其他状态（已撤、废单等），直接移除跟踪
-                logger.info(f"ℹ️ {stock_code} 委托单状态={order_status}, 移除跟踪")
+                logger.info(f"ℹ️ {stock_code} 委托单状态={order_status} (已撤/废单/其他)，无需操作，移除跟踪")
                 with self.pending_orders_lock:
                     self.pending_orders.pop(stock_code, None)
 
