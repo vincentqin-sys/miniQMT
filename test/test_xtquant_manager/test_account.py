@@ -400,5 +400,60 @@ class TestAccountTradeCallback(unittest.TestCase):
         self.assertEqual(len(account._trade_callbacks), 2)
 
 
+class TestAccountDisconnectCallback(unittest.TestCase):
+
+    def test_register_disconnect_callback_stored(self):
+        """register_disconnect_callback 应将回调存入列表"""
+        account, _, _ = make_account_with_mocks()
+        cb = MagicMock()
+        account.register_disconnect_callback(cb)
+        self.assertIn(cb, account._disconnect_callbacks)
+
+    def test_on_disconnected_sets_connected_false(self):
+        """on_disconnected 触发后 _connected 应立即变为 False"""
+        account, _, _ = make_account_with_mocks()
+        self.assertTrue(account._connected)
+
+        # 模拟 QMT 调用 on_disconnected
+        account._simulate_disconnect()
+
+        self.assertFalse(account._connected)
+
+    def test_on_disconnected_clears_last_ping_time(self):
+        """on_disconnected 触发后 _last_ping_ok_time 应被清零，使 is_healthy() 返回 False"""
+        account, _, _ = make_account_with_mocks()
+        self.assertIsNotNone(account._last_ping_ok_time)
+
+        account._simulate_disconnect()
+
+        self.assertIsNone(account._last_ping_ok_time)
+        self.assertFalse(account.is_healthy())
+
+    def test_on_disconnected_calls_external_callbacks(self):
+        """on_disconnected 应调用所有已注册的外部断连回调"""
+        account, _, _ = make_account_with_mocks()
+        cb1 = MagicMock()
+        cb2 = MagicMock()
+        account.register_disconnect_callback(cb1)
+        account.register_disconnect_callback(cb2)
+
+        account._simulate_disconnect()
+
+        cb1.assert_called_once()
+        cb2.assert_called_once()
+
+    def test_on_disconnected_callback_exception_does_not_crash(self):
+        """外部断连回调抛异常时，不影响其余回调执行"""
+        account, _, _ = make_account_with_mocks()
+        bad_cb = MagicMock(side_effect=RuntimeError("回调异常"))
+        good_cb = MagicMock()
+        account.register_disconnect_callback(bad_cb)
+        account.register_disconnect_callback(good_cb)
+
+        account._simulate_disconnect()  # 不应抛异常
+
+        good_cb.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -82,6 +82,9 @@ class XtQuantAccount:
         # 外部成交回调列表
         self._trade_callbacks: List[Any] = []
 
+        # 外部断连回调列表（on_disconnected 触发时调用）
+        self._disconnect_callbacks: List[Any] = []
+
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
@@ -179,7 +182,7 @@ class XtQuantAccount:
             return False
 
     def _setup_callbacks(self, xt_trader) -> None:
-        """注册交易回调"""
+        """注册交易回调和断连回调"""
         try:
             from xtquant.xttrader import XtQuantTraderCallback
 
@@ -187,6 +190,26 @@ class XtQuantAccount:
                 def __init__(self_cb, account_obj):
                     super().__init__()
                     self_cb._account = account_obj
+
+                def on_disconnected(self_cb):
+                    """
+                    QMT 进程崩溃或网络中断时由 xtquant 主动回调。
+                    立即更新连接状态，无需等待 HealthMonitor 轮询（快则 <1s）。
+                    参照 easy_qmt_trader.py:31-42 的已验证实现。
+                    """
+                    acct = self_cb._account
+                    logger.error(
+                        f"[{acct._id()}] QMT 连接断开（on_disconnected），"
+                        f"立即重置连接状态"
+                    )
+                    with acct._conn_lock:
+                        acct._connected = False
+                        acct._last_ping_ok_time = None  # 强制 is_healthy() 返回 False
+                    for cb in acct._disconnect_callbacks:
+                        try:
+                            cb()
+                        except Exception as ex:
+                            logger.warning(f"[{acct._id()}] 断连回调异常: {ex}")
 
                 def on_stock_trade(self_cb, trade):
                     for cb in self_cb._account._trade_callbacks:
@@ -559,6 +582,28 @@ class XtQuantAccount:
     def register_trade_callback(self, cb) -> None:
         """注册成交回调，连接后触发"""
         self._trade_callbacks.append(cb)
+
+    def register_disconnect_callback(self, cb) -> None:
+        """
+        注册断连事件回调。
+        QMT 连接断开时（on_disconnected 触发）立即调用 cb()。
+        主要供 HealthMonitor 注册以即时重置冷却计时器。
+        """
+        self._disconnect_callbacks.append(cb)
+
+    def _simulate_disconnect(self) -> None:
+        """
+        仅供测试使用：模拟 on_disconnected 回调触发。
+        生产代码通过 _Callback.on_disconnected() 自动触发。
+        """
+        with self._conn_lock:
+            self._connected = False
+            self._last_ping_ok_time = None
+        for cb in self._disconnect_callbacks:
+            try:
+                cb()
+            except Exception as ex:
+                logger.warning(f"[{self._id()}] 断连回调异常: {ex}")
 
     # ------------------------------------------------------------------
     # 状态快照（供 /health 和 /metrics 使用）
