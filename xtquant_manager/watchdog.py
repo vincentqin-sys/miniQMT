@@ -68,6 +68,7 @@ class ServerWatchdog:
         self._thread: Optional[threading.Thread] = None
         self._last_restart_time: float = 0.0
         self._restart_count: int = 0
+        self._status_lock = threading.Lock()
 
     def start(self) -> None:
         """启动后台守护线程"""
@@ -105,12 +106,15 @@ class ServerWatchdog:
 
     def get_status(self) -> dict:
         """返回看门狗状态快照"""
+        with self._status_lock:
+            restart_count = self._restart_count
+            last_restart_time = self._last_restart_time
         return {
             "running": self.is_running(),
             "check_interval": self._check_interval,
             "restart_cooldown": self._restart_cooldown,
-            "restart_count": self._restart_count,
-            "last_restart_time": self._last_restart_time,
+            "restart_count": restart_count,
+            "last_restart_time": last_restart_time,
         }
 
     # ------------------------------------------------------------------
@@ -143,10 +147,12 @@ class ServerWatchdog:
 
     def _do_restart(self) -> None:
         """执行重启"""
-        self._last_restart_time = time.time()
-        self._restart_count += 1
+        with self._status_lock:
+            self._last_restart_time = time.time()
+            self._restart_count += 1
+            count = self._restart_count
         logger.warning(
-            f"ServerWatchdog: 检测到服务停止，触发重启（第 {self._restart_count} 次）"
+            f"ServerWatchdog: 检测到服务停止，触发重启（第 {count} 次）"
         )
         try:
             self._restart_fn()
