@@ -25,6 +25,9 @@ from .metrics import MetricsCollector
 from .security import SecurityConfig
 from .server import create_app
 from .server_runner import XtQuantServer, XtQuantServerConfig
+from .standalone_config import StandaloneConfig, AccountEntry, load_standalone_config
+from .watchdog import ServerWatchdog
+from .standalone import StandaloneApplication, main as standalone_main
 
 __all__ = [
     # 核心管理
@@ -53,4 +56,11 @@ __all__ = [
     "XtQuantConnectionError",
     "AccountNotFoundError",
     "AccountAlreadyExistsError",
+    # 独立运行
+    "StandaloneConfig",
+    "AccountEntry",
+    "load_standalone_config",
+    "ServerWatchdog",
+    "StandaloneApplication",
+    "standalone_main",
 ]
