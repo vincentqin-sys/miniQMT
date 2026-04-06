@@ -29,6 +29,16 @@ except Exception:
     import logging
     logger = logging.getLogger("xtquant_manager.account")
 
+try:
+    from xtquant.xttrader import XtQuantTrader, XtQuantTraderCallback
+    from xtquant.xttype import StockAccount
+    _XTQUANT_AVAILABLE = True
+except ImportError:
+    XtQuantTrader = None
+    XtQuantTraderCallback = None
+    StockAccount = None
+    _XTQUANT_AVAILABLE = False
+
 
 @dataclass
 class AccountConfig:
@@ -39,6 +49,7 @@ class AccountConfig:
     session_id: Optional[int] = None          # None = 随机生成
     call_timeout: float = 3.0                  # 普通调用超时
     download_timeout: float = 30.0             # 历史数据下载超时
+    connect_timeout: float = 30.0              # xttrader.connect() 超时保护（秒）
     reconnect_base_wait: float = 60.0          # 重连基础等待（秒）
     max_reconnect_attempts: int = 5             # 最大重连次数（超过后仍重试但不计次）
     ping_stock: str = "000001.SZ"              # 心跳探测使用的股票代码
@@ -143,11 +154,11 @@ class XtQuantAccount:
             return False
 
     def _connect_xttrader(self) -> bool:
-        """连接 xttrader 交易接口"""
+        """连接 xttrader 交易接口（含超时保护，参照 easy_qmt_trader.py:314-340）"""
+        if not _XTQUANT_AVAILABLE:
+            logger.warning(f"[{self._id()}] xtquant 未安装，xttrader 不可用")
+            return False
         try:
-            from xtquant.xttrader import XtQuantTrader
-            from xtquant.xttype import StockAccount
-
             session_id = self.config.session_id
             if session_id is None:
                 session_id = random.randint(100000, 999999)
@@ -162,21 +173,64 @@ class XtQuantAccount:
             self._setup_callbacks(xt_trader)
 
             xt_trader.start()
-            connect_result = xt_trader.connect()
 
+            # ── 超时保护：在独立线程中调用 connect()，防止 QMT 未启动时永久阻塞 ──
+            connect_result_holder = [None]
+            connect_error_holder = [None]
+
+            def _do_connect():
+                try:
+                    connect_result_holder[0] = xt_trader.connect()
+                except Exception as e:
+                    connect_error_holder[0] = e
+
+            connect_thread = threading.Thread(target=_do_connect, daemon=True)
+            connect_thread.start()
+            connect_thread.join(self.config.connect_timeout)
+
+            if connect_thread.is_alive():
+                logger.error(
+                    f"[{self._id()}] xttrader.connect() 超时 "
+                    f"({self.config.connect_timeout}s)，中止连接"
+                )
+                try:
+                    xt_trader.stop()
+                except Exception:
+                    pass
+                return False
+
+            if connect_error_holder[0] is not None:
+                logger.error(
+                    f"[{self._id()}] xttrader.connect() 异常: "
+                    f"{connect_error_holder[0]}"
+                )
+                try:
+                    xt_trader.stop()
+                except Exception:
+                    pass
+                return False
+            # ── 超时保护结束 ──
+
+            connect_result = connect_result_holder[0]
             if connect_result == 0:
                 subscribe_result = xt_trader.subscribe(acc)
-                logger.info(f"[{self._id()}] xttrader 连接成功, 订阅结果={subscribe_result}")
+                logger.info(
+                    f"[{self._id()}] xttrader 连接成功, "
+                    f"订阅结果={subscribe_result}"
+                )
                 self._xt_trader = xt_trader
                 self._acc = acc
                 return True
             else:
-                logger.error(f"[{self._id()}] xttrader 连接失败, 结果={connect_result}")
+                logger.error(
+                    f"[{self._id()}] xttrader 连接失败, 结果={connect_result}"
+                )
+                try:
+                    xt_trader.stop()
+                except Exception:
+                    pass
                 return False
 
-        except ImportError:
-            logger.warning(f"[{self._id()}] xtquant 未安装，xttrader 不可用")
-            return False
         except Exception as e:
             logger.error(f"[{self._id()}] xttrader 连接异常: {e}")
             return False
@@ -184,7 +238,8 @@ class XtQuantAccount:
     def _setup_callbacks(self, xt_trader) -> None:
         """注册交易回调和断连回调"""
         try:
-            from xtquant.xttrader import XtQuantTraderCallback
+            if XtQuantTraderCallback is None:
+                return
 
             class _Callback(XtQuantTraderCallback):
                 def __init__(self_cb, account_obj):

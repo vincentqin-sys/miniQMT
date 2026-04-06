@@ -455,5 +455,73 @@ class TestAccountDisconnectCallback(unittest.TestCase):
         good_cb.assert_called_once()
 
 
+class TestConnectTimeout(unittest.TestCase):
+
+    def _make_account(self, connect_timeout=1.0):
+        config = make_config(connect_timeout=connect_timeout)
+        return XtQuantAccount(config)
+
+    def test_connect_timeout_field_defaults_to_30(self):
+        """AccountConfig.connect_timeout 默认值应为 30.0"""
+        config = AccountConfig(account_id="12345", qmt_path="/path")
+        self.assertEqual(config.connect_timeout, 30.0)
+
+    def test_connect_timeout_returns_false_when_blocked(self):
+        """xt_trader.connect() 超时时，_connect_xttrader 应返回 False"""
+        account = self._make_account(connect_timeout=0.1)
+
+        mock_trader = MagicMock()
+        # connect() 永不返回（模拟 QMT 未响应）
+        mock_trader.connect.side_effect = lambda: time.sleep(999)
+
+        with patch("xtquant_manager.account.XtQuantTrader", return_value=mock_trader), \
+             patch("xtquant_manager.account.StockAccount"):
+            result = account._connect_xttrader()
+
+        self.assertFalse(result)
+
+    def test_connect_timeout_stops_trader_on_timeout(self):
+        """超时时应调用 xt_trader.stop() 释放资源"""
+        account = self._make_account(connect_timeout=0.1)
+
+        mock_trader = MagicMock()
+        mock_trader.connect.side_effect = lambda: time.sleep(999)
+
+        with patch("xtquant_manager.account.XtQuantTrader", return_value=mock_trader), \
+             patch("xtquant_manager.account.StockAccount"):
+            account._connect_xttrader()
+
+        mock_trader.stop.assert_called()
+
+    def test_connect_succeeds_within_timeout(self):
+        """正常连接（在超时内完成）应返回 True"""
+        account = self._make_account(connect_timeout=5.0)
+
+        mock_trader = MagicMock()
+        mock_trader.connect.return_value = 0  # 0 = 成功
+        mock_acc = MagicMock()
+
+        with patch("xtquant_manager.account.XtQuantTrader", return_value=mock_trader), \
+             patch("xtquant_manager.account.StockAccount", return_value=mock_acc), \
+             patch("xtquant_manager.account.XtQuantTraderCallback"):
+            result = account._connect_xttrader()
+
+        self.assertTrue(result)
+
+    def test_connect_exception_returns_false(self):
+        """connect() 抛异常时应返回 False，且调用 stop()"""
+        account = self._make_account(connect_timeout=5.0)
+
+        mock_trader = MagicMock()
+        mock_trader.connect.side_effect = RuntimeError("连接异常")
+
+        with patch("xtquant_manager.account.XtQuantTrader", return_value=mock_trader), \
+             patch("xtquant_manager.account.StockAccount"):
+            result = account._connect_xttrader()
+
+        self.assertFalse(result)
+        mock_trader.stop.assert_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
