@@ -65,6 +65,9 @@ class HealthMonitor:
         self._last_reconnect_time: Dict[str, float] = {}
         self._reconnect_counts: Dict[str, int] = {}
 
+        # 已注册断连回调的账号集合（lazy-register，首次检查时注册，防止重复）
+        self._disconnect_cb_registered: set = set()
+
         # 统计
         self._check_count = 0
         self._total_reconnects = 0
@@ -154,6 +157,13 @@ class HealthMonitor:
         except AccountNotFoundError:
             return  # 账号已被注销，忽略
 
+        # ── 首次检查时，注册断连回调（lazy-register，确保只注册一次）──
+        if account_id not in self._disconnect_cb_registered:
+            account.register_disconnect_callback(
+                lambda aid=account_id: self._on_disconnect(aid)
+            )
+            self._disconnect_cb_registered.add(account_id)
+
         # Level 0: 快速内存检查
         if account.is_healthy():
             return
@@ -186,7 +196,7 @@ class HealthMonitor:
             f"(第 {self._reconnect_counts[account_id]} 次)"
         )
 
-        # 在后台线程执行重连，避免 reconnect() 内的 time.sleep(wait) 阻塞监控主循环。
+        # 在后台线程执行重连，避免 reconnect() 内的 Event.wait(wait) 阻塞监控主循环。
         # 多账号场景下，一个账号的重连等待不影响其他账号的健康检查。
         t = threading.Thread(
             target=account.reconnect,
@@ -201,3 +211,18 @@ class HealthMonitor:
         last_time = self._last_reconnect_time.get(account_id, 0)
         elapsed = time.time() - last_time
         return elapsed >= self._reconnect_cooldown
+
+    def _on_disconnect(self, account_id: str) -> None:
+        """
+        账号断连回调：立即重置冷却计时器。
+
+        当 XtQuantAccount.on_disconnected() 触发时，此方法被调用。
+        将 _last_reconnect_time 重置为 0，使下次 _check_account 不受冷却阻拦，
+        可立即尝试重连（而非等待 reconnect_cooldown 秒）。
+
+        参照 position_manager.py:319-328 的已验证实现。
+        """
+        logger.warning(
+            f"[{account_id[:4]}***] 收到断连通知，重置重连冷却计时器"
+        )
+        self._last_reconnect_time[account_id] = 0.0

@@ -368,5 +368,78 @@ class TestHealthMonitor(unittest.TestCase):
         self.assertGreater(monitor._total_reconnects, 0)
 
 
+class TestHealthMonitorDisconnectCallback(unittest.TestCase):
+    """验证 HealthMonitor 注册断连回调并在断连时重置冷却"""
+
+    def setUp(self):
+        """创建 manager + account + health_monitor"""
+        # 确保每个测试使用全新的 manager 实例
+        XtQuantManager.reset_instance()
+        self.manager = XtQuantManager.get_instance()
+
+        config = AccountConfig(
+            account_id="55009640",
+            qmt_path="mock/path",
+            ping_staleness_threshold=300.0,
+        )
+        self.account = XtQuantAccount(config)
+        mock_trader = MockXtTrader()
+        self.account._xt_trader = mock_trader
+        self.account._acc = MockStockAccount("55009640")
+        self.account._xtdata = MockXtData()
+        self.account._connected = True
+        self.account._last_ping_ok_time = time.time()
+
+        self.manager._accounts["55009640"] = self.account
+        self.monitor = HealthMonitor(
+            self.manager,
+            check_interval=0.05,
+            reconnect_cooldown=9999.0,  # 很长冷却，默认不允许重连
+        )
+
+    def tearDown(self):
+        XtQuantManager.reset_instance()
+
+    def test_disconnect_callback_registered_after_first_check(self):
+        """首次健康检查后，账号应已注册断连回调"""
+        self.monitor._check_account("55009640")
+        self.assertGreater(len(self.account._disconnect_callbacks), 0)
+
+    def test_disconnect_callback_registered_only_once(self):
+        """多次检查同一账号，只注册一次断连回调"""
+        self.monitor._check_account("55009640")
+        self.monitor._check_account("55009640")
+        self.monitor._check_account("55009640")
+        self.assertEqual(len(self.account._disconnect_callbacks), 1)
+
+    def test_on_disconnect_resets_cooldown_timer(self):
+        """断连回调触发时，HealthMonitor 应将该账号的冷却计时器重置为 0"""
+        # 模拟已发生过一次重连（冷却 9999s）
+        self.monitor._last_reconnect_time["55009640"] = time.time()
+
+        # 注册回调
+        self.monitor._check_account("55009640")
+
+        # 触发断连（模拟 on_disconnected）
+        self.account._simulate_disconnect()
+
+        # 冷却应被重置
+        reset_time = self.monitor._last_reconnect_time.get("55009640", None)
+        self.assertIsNotNone(reset_time)
+        self.assertAlmostEqual(reset_time, 0.0, places=3)
+
+    def test_after_disconnect_health_monitor_can_reconnect_immediately(self):
+        """断连 + 冷却重置后，下次 _check_account 不应被冷却阻止"""
+        # 设置冷却
+        self.monitor._last_reconnect_time["55009640"] = time.time()
+        self.monitor._check_account("55009640")  # 注册回调
+
+        # 触发断连，冷却被重置
+        self.account._simulate_disconnect()  # _connected=False, 触发回调
+
+        # 验证冷却已清零，_can_reconnect 返回 True
+        self.assertTrue(self.monitor._can_reconnect("55009640"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
