@@ -158,6 +158,7 @@ class XtQuantAccount:
         if not _XTQUANT_AVAILABLE:
             logger.warning(f"[{self._id()}] xtquant 未安装，xttrader 不可用")
             return False
+        xt_trader = None
         try:
             session_id = self.config.session_id
             if session_id is None:
@@ -233,6 +234,11 @@ class XtQuantAccount:
 
         except Exception as e:
             logger.error(f"[{self._id()}] xttrader 连接异常: {e}")
+            if xt_trader is not None:
+                try:
+                    xt_trader.stop()
+                except Exception:
+                    pass
             return False
 
     def _setup_callbacks(self, xt_trader) -> None:
