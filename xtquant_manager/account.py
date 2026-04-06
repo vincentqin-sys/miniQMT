@@ -202,14 +202,7 @@ class XtQuantAccount:
                         f"[{acct._id()}] QMT 连接断开（on_disconnected），"
                         f"立即重置连接状态"
                     )
-                    with acct._conn_lock:
-                        acct._connected = False
-                        acct._last_ping_ok_time = None  # 强制 is_healthy() 返回 False
-                    for cb in acct._disconnect_callbacks:
-                        try:
-                            cb()
-                        except Exception as ex:
-                            logger.warning(f"[{acct._id()}] 断连回调异常: {ex}")
+                    acct._on_disconnect_event()
 
                 def on_stock_trade(self_cb, trade):
                     for cb in self_cb._account._trade_callbacks:
@@ -591,11 +584,8 @@ class XtQuantAccount:
         """
         self._disconnect_callbacks.append(cb)
 
-    def _simulate_disconnect(self) -> None:
-        """
-        仅供测试使用：模拟 on_disconnected 回调触发。
-        生产代码通过 _Callback.on_disconnected() 自动触发。
-        """
+    def _on_disconnect_event(self) -> None:
+        """内部断连事件处理，由 on_disconnected 回调和 _simulate_disconnect 共同调用"""
         with self._conn_lock:
             self._connected = False
             self._last_ping_ok_time = None
@@ -603,7 +593,14 @@ class XtQuantAccount:
             try:
                 cb()
             except Exception as ex:
-                logger.warning(f"[{self._id()}] 断连回调异常: {ex}")
+                logger.error(f"[{self._id()}] 断连回调异常: {ex}")
+
+    def _simulate_disconnect(self) -> None:
+        """
+        仅供测试使用：模拟 on_disconnected 回调触发。
+        生产代码通过 _Callback.on_disconnected() 自动触发。
+        """
+        self._on_disconnect_event()
 
     # ------------------------------------------------------------------
     # 状态快照（供 /health 和 /metrics 使用）
