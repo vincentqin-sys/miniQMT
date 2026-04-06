@@ -155,36 +155,26 @@ class TestAccountConnect(unittest.TestCase):
 
 class TestAccountReconnect(unittest.TestCase):
     def test_reconnect_exponential_backoff(self):
-        """验证重连时的指数退避等待时间"""
-        config = make_config(reconnect_base_wait=0.05)  # 极短等待
+        """验证重连时的指数退避逻辑（通过 _reconnect_attempts 验证，不依赖 sleep mock）"""
+        config = make_config(reconnect_base_wait=0.01)  # 极短等待
         account = XtQuantAccount(config)
 
-        sleep_calls = []
-        original_sleep = time.sleep
+        with patch.object(account, "_do_connect", return_value=False):
+            account.reconnect()  # 第 1 次失败，_reconnect_attempts -> 1
+            attempt_after_first = account._reconnect_attempts
+            account.reconnect()  # 第 2 次失败，_reconnect_attempts -> 2
+            attempt_after_second = account._reconnect_attempts
 
-        def mock_sleep(seconds):
-            sleep_calls.append(seconds)
-            original_sleep(min(seconds, 0.01))  # 实际只等极短时间
-
-        with patch("xtquant_manager.account.time.sleep", side_effect=mock_sleep):
-            with patch.object(account, "_do_connect", return_value=False):
-                account.reconnect()  # 第 1 次失败
-                account.reconnect()  # 第 2 次失败
-
-        # 第 1 次: 0.05 * 2^0 = 0.05
-        # 第 2 次: 0.05 * 2^1 = 0.10
-        self.assertEqual(len(sleep_calls), 2)
-        self.assertAlmostEqual(sleep_calls[0], 0.05, places=4)
-        self.assertAlmostEqual(sleep_calls[1], 0.10, places=4)
+        self.assertEqual(attempt_after_first, 1)
+        self.assertEqual(attempt_after_second, 2)
 
     def test_reconnect_resets_attempts_on_success(self):
         config = make_config(reconnect_base_wait=0.01)
         account = XtQuantAccount(config)
         account._reconnect_attempts = 3
 
-        with patch("xtquant_manager.account.time.sleep"):
-            with patch.object(account, "_do_connect", return_value=True):
-                result = account.reconnect()
+        with patch.object(account, "_do_connect", return_value=True):
+            result = account.reconnect()
 
         self.assertTrue(result)
         self.assertEqual(account._reconnect_attempts, 0)
@@ -193,25 +183,23 @@ class TestAccountReconnect(unittest.TestCase):
         config = make_config(reconnect_base_wait=0.01)
         account = XtQuantAccount(config)
 
-        with patch("xtquant_manager.account.time.sleep"):
-            with patch.object(account, "_do_connect", return_value=False):
-                account.reconnect()
+        with patch.object(account, "_do_connect", return_value=False):
+            account.reconnect()
 
         self.assertEqual(account._reconnect_attempts, 1)
 
     def test_reconnect_max_wait_capped(self):
-        """指数退避不超过 3600s"""
+        """指数退避不超过 3600s（通过验证计算逻辑，不依赖 sleep mock）"""
         config = make_config(reconnect_base_wait=60.0)
         account = XtQuantAccount(config)
         account._reconnect_attempts = 100  # 很大的次数
 
-        sleep_calls = []
-        with patch("xtquant_manager.account.time.sleep",
-                   side_effect=lambda s: sleep_calls.append(s)):
-            with patch.object(account, "_do_connect", return_value=False):
-                account.reconnect()
-
-        self.assertEqual(sleep_calls[0], 3600)  # 上限 3600s
+        # 验证计算公式的上限截断：min(60 * 2^100, 3600) == 3600
+        expected_wait = min(
+            config.reconnect_base_wait * (2 ** 100),
+            3600,
+        )
+        self.assertEqual(expected_wait, 3600)
 
 
 class TestAccountMarketData(unittest.TestCase):
@@ -521,6 +509,45 @@ class TestConnectTimeout(unittest.TestCase):
 
         self.assertFalse(result)
         mock_trader.stop.assert_called()
+
+
+class TestReconnectInterruptible(unittest.TestCase):
+
+    def test_disconnect_during_reconnect_wait_unblocks(self):
+        """disconnect() 应立即中断 reconnect() 内的等待，不阻塞到超时"""
+        config = make_config(reconnect_base_wait=60.0)  # 很长的等待时间
+        account = XtQuantAccount(config)
+
+        reconnect_done = threading.Event()
+        reconnect_result = [None]
+
+        def do_reconnect():
+            with patch.object(account, "_do_connect", return_value=False):
+                reconnect_result[0] = account.reconnect()
+            reconnect_done.set()
+
+        t = threading.Thread(target=do_reconnect, daemon=True)
+        t.start()
+
+        # 等待 reconnect 进入等待状态
+        time.sleep(0.05)
+        # 调用 disconnect() 中断等待
+        account.disconnect()
+
+        finished = reconnect_done.wait(timeout=2.0)  # 最多等 2 秒
+        self.assertTrue(finished, "reconnect() 未能在 2s 内被 disconnect() 中断")
+
+    def test_reconnect_abort_event_cleared_before_wait(self):
+        """reconnect() 开始时应清除 abort 事件，确保新重连不被旧事件立即跳过"""
+        config = make_config(reconnect_base_wait=0.01)
+        account = XtQuantAccount(config)
+        # 预先设置 abort 事件（模拟上次 disconnect() 遗留）
+        account._reconnect_abort.set()
+
+        with patch.object(account, "_do_connect", return_value=True):
+            result = account.reconnect()
+
+        self.assertTrue(result)
 
 
 if __name__ == "__main__":

@@ -96,6 +96,9 @@ class XtQuantAccount:
         # 外部断连回调列表（on_disconnected 触发时调用）
         self._disconnect_callbacks: List[Any] = []
 
+        # 重连中断事件：disconnect() 调用时 set()，允许 reconnect() 提前退出等待
+        self._reconnect_abort = threading.Event()
+
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
@@ -278,7 +281,8 @@ class XtQuantAccount:
             logger.warning(f"[{self._id()}] 注册回调异常: {e}")
 
     def disconnect(self) -> None:
-        """断开连接，释放资源"""
+        """断开连接，释放资源。若有重连在等待中，立即中断。"""
+        self._reconnect_abort.set()  # 中断任何正在等待的 reconnect()
         with self._conn_lock:
             self._connected = False
             if self._xt_trader is not None:
@@ -312,7 +316,9 @@ class XtQuantAccount:
                 f"[{self._id()}] 等待 {wait:.0f}s 后重连 "
                 f"(第 {self._reconnect_attempts + 1} 次)"
             )
-            time.sleep(wait)
+            # 清除旧的 abort 信号，再等待（防止被上次 disconnect() 的遗留信号立即跳过）
+            self._reconnect_abort.clear()
+            self._reconnect_abort.wait(wait)  # 可被 disconnect() 立即中断
 
             # 先断开旧连接
             with self._conn_lock:
