@@ -21,7 +21,7 @@ import threading
 import time
 from typing import Optional
 
-from .standalone_config import AccountEntry, StandaloneConfig, load_standalone_config
+from .standalone_config import StandaloneConfig, load_standalone_config
 from .server_runner import XtQuantServer, XtQuantServerConfig
 from .manager import XtQuantManager
 from .account import AccountConfig
@@ -50,6 +50,7 @@ class StandaloneApplication:
         self._server: Optional[XtQuantServer] = None
         self._watchdog: Optional[ServerWatchdog] = None
         self._stop_event = threading.Event()
+        self._server_lock = threading.Lock()
 
     def run(self) -> None:
         """
@@ -112,13 +113,14 @@ class StandaloneApplication:
 
     def _start_server(self) -> None:
         """创建并启动 HTTP 服务（后台线程）"""
-        self._server = XtQuantServer(config=self._build_server_config())
-        self._server.start(blocking=False)
-        logger.info(
-            f"HTTP 服务已启动: "
-            f"{'https' if self._server.config.use_tls else 'http'}://"
-            f"{self._config.host}:{self._config.port}"
-        )
+        with self._server_lock:
+            self._server = XtQuantServer(config=self._build_server_config())
+            self._server.start(blocking=False)
+            logger.info(
+                f"HTTP 服务已启动: "
+                f"{'https' if self._server.config.use_tls else 'http'}://"
+                f"{self._config.host}:{self._config.port}"
+            )
 
     def _start_watchdog(self) -> None:
         """启动服务线程看门狗"""
@@ -133,12 +135,19 @@ class StandaloneApplication:
     def _restart_server(self) -> None:
         """看门狗触发：重建并重启 HTTP 服务"""
         logger.warning("Watchdog 触发服务重启...")
-        if self._server is not None:
-            try:
-                self._server.stop(timeout=5.0)
-            except Exception:
-                pass
-        self._start_server()
+        with self._server_lock:
+            if self._server is not None:
+                try:
+                    self._server.stop(timeout=5.0)
+                except Exception:
+                    pass
+            self._server = XtQuantServer(config=self._build_server_config())
+            self._server.start(blocking=False)
+            logger.info(
+                f"HTTP 服务已重启: "
+                f"{'https' if self._server.config.use_tls else 'http'}://"
+                f"{self._config.host}:{self._config.port}"
+            )
 
     def _register_accounts(self) -> None:
         """向 XtQuantManager 注册配置文件中的所有账号"""
@@ -180,9 +189,10 @@ class StandaloneApplication:
         """输出系统心跳日志"""
         manager = XtQuantManager.get_instance()
         account_count = len(manager.list_accounts())
-        server_status = (
-            "运行中" if self._server and self._server.is_running() else "已停止"
-        )
+        with self._server_lock:
+            server_status = (
+                "运行中" if self._server and self._server.is_running() else "已停止"
+            )
         watchdog_restarts = (
             self._watchdog.get_status()["restart_count"]
             if self._watchdog else 0
@@ -210,9 +220,11 @@ class StandaloneApplication:
                 logger.warning(f"停止看门狗时出错: {e}")
 
         # 2. 停止 HTTP 服务
-        if self._server is not None:
+        with self._server_lock:
+            server = self._server
+        if server is not None:
             try:
-                self._server.stop(timeout=5.0)
+                server.stop(timeout=5.0)
             except Exception as e:
                 logger.warning(f"停止 HTTP 服务时出错: {e}")
 

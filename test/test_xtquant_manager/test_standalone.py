@@ -106,7 +106,7 @@ class TestStandaloneApplicationLifecycle(unittest.TestCase):
     def test_stop_shuts_down_all_components(
         self, MockWatchdog, MockManager, MockServer
     ):
-        """stop() 应依次停止 watchdog、server、manager"""
+        """stop() 应依次停止 watchdog、server、manager（顺序：watchdog → server → manager）"""
         mock_server_instance = MagicMock()
         mock_server_instance.is_running.return_value = True
         mock_server_instance.config = MagicMock()
@@ -121,6 +121,12 @@ class TestStandaloneApplicationLifecycle(unittest.TestCase):
         mock_manager_instance.list_accounts.return_value = []
         MockManager.get_instance.return_value = mock_manager_instance
 
+        # 用调用顺序列表追踪关闭顺序
+        call_order = []
+        mock_watchdog_instance.stop.side_effect = lambda **kwargs: call_order.append('watchdog')
+        mock_server_instance.stop.side_effect = lambda **kwargs: call_order.append('server')
+        mock_manager_instance.shutdown.side_effect = lambda: call_order.append('manager')
+
         app = self._make_app()
         t = threading.Thread(target=app.run, daemon=True)
         t.start()
@@ -131,6 +137,10 @@ class TestStandaloneApplicationLifecycle(unittest.TestCase):
         mock_watchdog_instance.stop.assert_called()
         mock_server_instance.stop.assert_called()
         mock_manager_instance.shutdown.assert_called()
+
+        # 验证关闭顺序：watchdog → server → manager
+        self.assertEqual(call_order, ['watchdog', 'server', 'manager'],
+                         f"关闭顺序错误，实际顺序: {call_order}")
 
     @patch("xtquant_manager.standalone.XtQuantServer")
     @patch("xtquant_manager.standalone.XtQuantManager")
