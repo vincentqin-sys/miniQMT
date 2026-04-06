@@ -93,8 +93,15 @@ def load_standalone_config(config_path: str = "") -> StandaloneConfig:
     if not path:
         return StandaloneConfig()
 
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        import logging
+        logging.getLogger("xtquant_manager.standalone_config").warning(
+            f"加载配置文件失败，使用默认配置: {e}"
+        )
+        return StandaloneConfig()
 
     return _parse_config(data)
 
@@ -117,6 +124,7 @@ def _resolve_config_path(config_path: str) -> Optional[str]:
 
 def _parse_config(data: Dict[str, Any]) -> StandaloneConfig:
     """将 JSON dict 解析为 StandaloneConfig"""
+    defaults = StandaloneConfig()
     _account_fields = set(AccountEntry.__dataclass_fields__)
     accounts = [
         AccountEntry(**{k: v for k, v in a.items() if k in _account_fields})
@@ -125,19 +133,19 @@ def _parse_config(data: Dict[str, Any]) -> StandaloneConfig:
     ]
 
     return StandaloneConfig(
-        host=data.get("host", "127.0.0.1"),
-        port=data.get("port", 8888),
-        api_token=data.get("api_token", ""),
-        allowed_ips=data.get("allowed_ips", []),
-        rate_limit=data.get("rate_limit", 60),
-        enable_hmac=data.get("enable_hmac", False),
-        hmac_secret=data.get("hmac_secret", ""),
-        ssl_certfile=data.get("ssl_certfile", ""),
-        ssl_keyfile=data.get("ssl_keyfile", ""),
-        health_check_interval=data.get("health_check_interval", 30.0),
-        reconnect_cooldown=data.get("reconnect_cooldown", 60.0),
-        watchdog_interval=data.get("watchdog_interval", 10.0),
-        watchdog_restart_cooldown=data.get("watchdog_restart_cooldown", 30.0),
-        heartbeat_interval=data.get("heartbeat_interval", 1800.0),
+        host=data.get("host", defaults.host),
+        port=data.get("port", defaults.port),
+        api_token=data.get("api_token", defaults.api_token),
+        allowed_ips=data.get("allowed_ips", defaults.allowed_ips),
+        rate_limit=data.get("rate_limit", defaults.rate_limit),
+        enable_hmac=data.get("enable_hmac", defaults.enable_hmac),
+        hmac_secret=data.get("hmac_secret", defaults.hmac_secret),
+        ssl_certfile=data.get("ssl_certfile", defaults.ssl_certfile),
+        ssl_keyfile=data.get("ssl_keyfile", defaults.ssl_keyfile),
+        health_check_interval=data.get("health_check_interval", defaults.health_check_interval),
+        reconnect_cooldown=data.get("reconnect_cooldown", defaults.reconnect_cooldown),
+        watchdog_interval=data.get("watchdog_interval", defaults.watchdog_interval),
+        watchdog_restart_cooldown=data.get("watchdog_restart_cooldown", defaults.watchdog_restart_cooldown),
+        heartbeat_interval=data.get("heartbeat_interval", defaults.heartbeat_interval),
         accounts=accounts,
     )

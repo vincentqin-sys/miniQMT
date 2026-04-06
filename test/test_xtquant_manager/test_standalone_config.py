@@ -51,12 +51,12 @@ class TestLoadStandaloneConfigFromFile(unittest.TestCase):
             "api_token": "secret123",
             "rate_limit": 120,
         })
+        self.addCleanup(os.unlink, path)
         cfg = load_standalone_config(path)
         self.assertEqual(cfg.host, "0.0.0.0")
         self.assertEqual(cfg.port, 9999)
         self.assertEqual(cfg.api_token, "secret123")
         self.assertEqual(cfg.rate_limit, 120)
-        os.unlink(path)
 
     def test_loads_accounts(self):
         path = self._write_config({
@@ -73,13 +73,13 @@ class TestLoadStandaloneConfigFromFile(unittest.TestCase):
                 },
             ]
         })
+        self.addCleanup(os.unlink, path)
         cfg = load_standalone_config(path)
         self.assertEqual(len(cfg.accounts), 2)
         self.assertEqual(cfg.accounts[0].account_id, "25105132")
         self.assertEqual(cfg.accounts[0].call_timeout, 5.0)
         self.assertEqual(cfg.accounts[1].account_id, "25105133")
         self.assertEqual(cfg.accounts[1].account_type, "STOCK")  # 默认值
-        os.unlink(path)
 
     def test_loads_watchdog_and_heartbeat_fields(self):
         path = self._write_config({
@@ -87,18 +87,18 @@ class TestLoadStandaloneConfigFromFile(unittest.TestCase):
             "watchdog_restart_cooldown": 60.0,
             "heartbeat_interval": 300.0,
         })
+        self.addCleanup(os.unlink, path)
         cfg = load_standalone_config(path)
         self.assertEqual(cfg.watchdog_interval, 15.0)
         self.assertEqual(cfg.watchdog_restart_cooldown, 60.0)
         self.assertEqual(cfg.heartbeat_interval, 300.0)
-        os.unlink(path)
 
     def test_env_var_takes_priority(self):
         path = self._write_config({"port": 7777})
+        self.addCleanup(os.unlink, path)
         os.environ["XTQUANT_MANAGER_CONFIG"] = path
         cfg = load_standalone_config("")  # 不传路径，依赖环境变量
         self.assertEqual(cfg.port, 7777)
-        os.unlink(path)
 
     def test_loads_security_fields(self):
         path = self._write_config({
@@ -108,12 +108,34 @@ class TestLoadStandaloneConfigFromFile(unittest.TestCase):
             "ssl_certfile": "/path/to/cert.pem",
             "ssl_keyfile": "/path/to/key.pem",
         })
+        self.addCleanup(os.unlink, path)
         cfg = load_standalone_config(path)
         self.assertEqual(cfg.allowed_ips, ["192.168.1.1", "10.0.0.1"])
         self.assertTrue(cfg.enable_hmac)
         self.assertEqual(cfg.hmac_secret, "mysecret")
         self.assertEqual(cfg.ssl_certfile, "/path/to/cert.pem")
-        os.unlink(path)
+
+    def test_invalid_json_returns_default(self):
+        """JSON 格式损坏时，应返回默认配置（不抛异常）"""
+        f = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        )
+        f.write("{ not valid json }")
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        cfg = load_standalone_config(f.name)
+        self.assertIsInstance(cfg, StandaloneConfig)
+        self.assertEqual(cfg.host, "127.0.0.1")  # 默认值
+
+    def test_explicit_path_overrides_env_var(self):
+        """显式路径应优先于环境变量 XTQUANT_MANAGER_CONFIG"""
+        path_explicit = self._write_config({"port": 1111})
+        path_env = self._write_config({"port": 2222})
+        self.addCleanup(os.unlink, path_explicit)
+        self.addCleanup(os.unlink, path_env)
+        os.environ["XTQUANT_MANAGER_CONFIG"] = path_env
+        cfg = load_standalone_config(path_explicit)  # 显式路径应胜出
+        self.assertEqual(cfg.port, 1111)
 
 
 if __name__ == "__main__":
