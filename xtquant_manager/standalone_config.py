@@ -108,8 +108,13 @@ def load_standalone_config(config_path: str = "") -> StandaloneConfig:
 
 def _resolve_config_path(config_path: str) -> Optional[str]:
     """按优先级解析配置文件路径"""
-    if config_path and os.path.isfile(config_path):
-        return config_path
+    if config_path:
+        if os.path.isfile(config_path):
+            return config_path
+        import logging
+        logging.getLogger("xtquant_manager.standalone_config").warning(
+            f"指定的配置文件不存在: {config_path}，将按优先级回退查找"
+        )
 
     env_path = os.environ.get("XTQUANT_MANAGER_CONFIG", "")
     if env_path and os.path.isfile(env_path):
