@@ -1,0 +1,143 @@
+# xtquant_manager/standalone_config.py
+"""
+StandaloneConfig — 独立运行模式配置加载器
+
+从 JSON 文件加载配置，不依赖 miniQMT 的 config.py。
+优先级：显式路径 > 环境变量 XTQUANT_MANAGER_CONFIG > 当前目录 xtquant_manager_config.json > 默认值
+
+配置文件格式（xtquant_manager_config.json）:
+{
+  "host": "127.0.0.1",
+  "port": 8888,
+  "api_token": "",
+  "allowed_ips": [],
+  "rate_limit": 60,
+  "enable_hmac": false,
+  "hmac_secret": "",
+  "ssl_certfile": "",
+  "ssl_keyfile": "",
+  "health_check_interval": 30.0,
+  "reconnect_cooldown": 60.0,
+  "heartbeat_interval": 1800.0,
+  "watchdog_interval": 10.0,
+  "watchdog_restart_cooldown": 30.0,
+  "accounts": [
+    {
+      "account_id": "25105132",
+      "qmt_path": "C:/path/to/userdata_mini",
+      "account_type": "STOCK",
+      "call_timeout": 3.0,
+      "reconnect_base_wait": 60.0,
+      "max_reconnect_attempts": 5
+    }
+  ]
+}
+"""
+import json
+import os
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+
+@dataclass
+class AccountEntry:
+    """独立配置文件中的单个账号条目"""
+    account_id: str
+    qmt_path: str
+    account_type: str = "STOCK"
+    call_timeout: float = 3.0
+    reconnect_base_wait: float = 60.0
+    max_reconnect_attempts: int = 5
+
+
+@dataclass
+class StandaloneConfig:
+    """独立运行配置，所有字段均有默认值"""
+    # HTTP 服务
+    host: str = "127.0.0.1"
+    port: int = 8888
+    # 安全
+    api_token: str = ""
+    allowed_ips: List[str] = field(default_factory=list)
+    rate_limit: int = 60
+    enable_hmac: bool = False
+    hmac_secret: str = ""
+    # TLS（可选）
+    ssl_certfile: str = ""
+    ssl_keyfile: str = ""
+    # 账号健康监控
+    health_check_interval: float = 30.0
+    reconnect_cooldown: float = 60.0
+    # 服务看门狗
+    watchdog_interval: float = 10.0
+    watchdog_restart_cooldown: float = 30.0
+    # 心跳日志
+    heartbeat_interval: float = 1800.0
+    # 账号列表
+    accounts: List[AccountEntry] = field(default_factory=list)
+
+
+def load_standalone_config(config_path: str = "") -> StandaloneConfig:
+    """
+    从 JSON 文件加载独立运行配置。
+
+    Args:
+        config_path: 配置文件路径。为空时按优先级查找：
+            1. 环境变量 XTQUANT_MANAGER_CONFIG
+            2. 当前目录的 xtquant_manager_config.json
+
+    Returns:
+        StandaloneConfig 实例（找不到文件时使用全部默认值）
+    """
+    path = _resolve_config_path(config_path)
+    if not path:
+        return StandaloneConfig()
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    return _parse_config(data)
+
+
+def _resolve_config_path(config_path: str) -> Optional[str]:
+    """按优先级解析配置文件路径"""
+    if config_path and os.path.isfile(config_path):
+        return config_path
+
+    env_path = os.environ.get("XTQUANT_MANAGER_CONFIG", "")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+
+    local_path = "xtquant_manager_config.json"
+    if os.path.isfile(local_path):
+        return local_path
+
+    return None
+
+
+def _parse_config(data: Dict[str, Any]) -> StandaloneConfig:
+    """将 JSON dict 解析为 StandaloneConfig"""
+    _account_fields = set(AccountEntry.__dataclass_fields__)
+    accounts = [
+        AccountEntry(**{k: v for k, v in a.items() if k in _account_fields})
+        for a in data.get("accounts", [])
+        if "account_id" in a and "qmt_path" in a
+    ]
+
+    return StandaloneConfig(
+        host=data.get("host", "127.0.0.1"),
+        port=data.get("port", 8888),
+        api_token=data.get("api_token", ""),
+        allowed_ips=data.get("allowed_ips", []),
+        rate_limit=data.get("rate_limit", 60),
+        enable_hmac=data.get("enable_hmac", False),
+        hmac_secret=data.get("hmac_secret", ""),
+        ssl_certfile=data.get("ssl_certfile", ""),
+        ssl_keyfile=data.get("ssl_keyfile", ""),
+        health_check_interval=data.get("health_check_interval", 30.0),
+        reconnect_cooldown=data.get("reconnect_cooldown", 60.0),
+        watchdog_interval=data.get("watchdog_interval", 10.0),
+        watchdog_restart_cooldown=data.get("watchdog_restart_cooldown", 30.0),
+        heartbeat_interval=data.get("heartbeat_interval", 1800.0),
+        accounts=accounts,
+    )
