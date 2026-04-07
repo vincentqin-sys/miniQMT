@@ -1,0 +1,1320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XtQuantManager 测试台 v2 (可视化版)</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg0: #0d1117; --bg1: #161b22; --bg2: #21262d; --bg3: #30363d;
+    --border: #30363d; --border2: #21262d;
+    --text0: #e6edf3; --text1: #8b949e; --text2: #6e7681;
+    --blue:   #58a6ff; --green:  #3fb950; --yellow: #d29922;
+    --red:    #f85149; --purple: #bc8cff; --cyan:   #39c5cf;
+    --orange: #f0883e;
+    --radius: 6px; --radius-lg: 10px;
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         font-size: 13px; background: var(--bg0); color: var(--text0);
+         min-height: 100vh; overflow: hidden; }
+
+  /* ══ 顶栏 ══════════════════════════════════════════════════════════════ */
+  header {
+    height: 52px; background: var(--bg1); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 16px; gap: 12px; flex-shrink: 0;
+  }
+  .logo { font-size: 14px; font-weight: 700; color: var(--purple); letter-spacing: -0.5px; white-space: nowrap; }
+  .logo span { color: var(--cyan); }
+  .hbar-sep { width: 1px; height: 20px; background: var(--border); }
+  .hbar-field { display: flex; align-items: center; gap: 6px; }
+  .hbar-field label { font-size: 11px; color: var(--text2); white-space: nowrap; }
+  .hbar-input {
+    background: var(--bg2); border: 1px solid var(--border); color: var(--text0);
+    padding: 5px 10px; border-radius: var(--radius); font-size: 12px;
+    font-family: 'SF Mono', Consolas, monospace; transition: border-color .15s;
+  }
+  .hbar-input:focus { outline: none; border-color: var(--purple); }
+  #h-base-url { width: 200px; }
+  #h-token    { width: 160px; }
+  #h-account  { width: 155px; cursor: pointer; }
+  .conn-badge {
+    display: flex; align-items: center; gap: 5px; font-size: 11px;
+    padding: 4px 10px; border-radius: 20px; background: var(--bg2);
+    border: 1px solid var(--border); white-space: nowrap;
+  }
+  .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text2); }
+  .conn-dot.ok  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .conn-dot.err { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+  .conn-dot.pulse { animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .hbar-btn {
+    padding: 5px 12px; border-radius: var(--radius); border: 1px solid var(--border);
+    background: var(--bg2); color: var(--text0); cursor: pointer; font-size: 11px;
+    font-family: inherit; transition: all .15s; white-space: nowrap;
+  }
+  .hbar-btn:hover { background: var(--bg3); border-color: var(--text1); }
+
+  /* ══ 主布局 ════════════════════════════════════════════════════════════ */
+  .main-layout { display: flex; height: calc(100vh - 52px); overflow: hidden; }
+
+  /* ══ 左导航 ════════════════════════════════════════════════════════════ */
+  #sidebar {
+    width: 196px; flex-shrink: 0; background: var(--bg1);
+    border-right: 1px solid var(--border); overflow-y: auto;
+    display: flex; flex-direction: column;
+  }
+  .sidebar-search {
+    padding: 10px; border-bottom: 1px solid var(--border2);
+  }
+  .sidebar-search input {
+    width: 100%; background: var(--bg2); border: 1px solid var(--border);
+    color: var(--text0); padding: 5px 8px 5px 26px; border-radius: var(--radius);
+    font-size: 11px; font-family: inherit;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cpath d='m21 21-4.35-4.35'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 8px center;
+  }
+  .sidebar-search input:focus { outline: none; border-color: var(--purple); }
+  .nav-section { padding: 8px 0 4px; }
+  .nav-section-label {
+    font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--text2); padding: 0 12px 4px;
+  }
+  .nav-btn {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 6px 12px; background: none; border: none; cursor: pointer;
+    color: var(--text1); font-size: 12px; font-family: inherit;
+    transition: all .1s; text-align: left;
+  }
+  .nav-btn:hover { background: var(--bg2); color: var(--text0); }
+  .nav-btn.active { background: rgba(88,166,255,.1); color: var(--blue); }
+  .nav-btn.active .nav-method { box-shadow: 0 0 0 1px currentColor; }
+  .nav-method {
+    font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+    min-width: 32px; text-align: center; flex-shrink: 0;
+  }
+  .m-get  { background: rgba(57,197,207,.15); color: var(--cyan); }
+  .m-post { background: rgba(63,185,80,.15);  color: var(--green); }
+  .m-del  { background: rgba(248,81,73,.15);  color: var(--red); }
+  .nav-label { flex: 1; }
+  .nav-badge {
+    font-size: 9px; padding: 1px 5px; border-radius: 10px;
+    background: rgba(188,140,255,.2); color: var(--purple);
+  }
+
+  /* ══ 中间工作区 ════════════════════════════════════════════════════════ */
+  #workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #endpoint-header {
+    padding: 14px 18px 10px; border-bottom: 1px solid var(--border);
+    background: var(--bg1); flex-shrink: 0;
+  }
+  .ep-title { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .ep-title h2 { font-size: 15px; font-weight: 600; color: var(--text0); }
+  .ep-url { font-size: 11px; color: var(--text2); font-family: 'SF Mono', Consolas, monospace; }
+  .ep-url code { color: var(--blue); }
+  .ep-tags { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .ep-tag {
+    font-size: 10px; padding: 2px 7px; border-radius: 10px;
+    background: var(--bg2); color: var(--text1); border: 1px solid var(--border);
+  }
+  .ep-tag.auth-free { background: rgba(63,185,80,.1); color: var(--green); border-color: rgba(63,185,80,.3); }
+  .ep-tag.danger { background: rgba(248,81,73,.1); color: var(--red); border-color: rgba(248,81,73,.3); }
+
+  /* 工作区主体 */
+  #work-body { flex: 1; display: flex; overflow: hidden; }
+  #work-left  { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  #work-right { width: 380px; flex-shrink: 0; background: var(--bg1);
+                border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+
+  /* ══ 表单组件 ═══════════════════════════════════════════════════════════ */
+  .field-group { margin-bottom: 14px; }
+  .field-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--text1); margin-bottom: 5px; font-weight: 500;
+  }
+  .badge-req { font-size: 9px; padding: 1px 5px; border-radius: 10px;
+               background: rgba(248,81,73,.15); color: var(--red); }
+  .badge-opt { font-size: 9px; padding: 1px 5px; border-radius: 10px;
+               background: var(--bg3); color: var(--text2); }
+  .field-input, .field-select, .field-textarea {
+    width: 100%; background: var(--bg2); border: 1px solid var(--border);
+    color: var(--text0); padding: 7px 10px; border-radius: var(--radius);
+    font-size: 12px; font-family: inherit; transition: border-color .15s;
+  }
+  .field-input:focus, .field-select:focus, .field-textarea:focus {
+    outline: none; border-color: var(--purple); background: var(--bg1);
+  }
+  .field-textarea { resize: vertical; min-height: 70px; font-family: 'SF Mono', Consolas, monospace; }
+  .field-hint { font-size: 10px; color: var(--text2); margin-top: 3px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 14px; }
+
+  /* 预设按钮 */
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .preset-btn {
+    font-size: 10px; padding: 3px 10px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--bg2);
+    color: var(--text1); cursor: pointer; transition: all .15s;
+  }
+  .preset-btn:hover { background: var(--bg3); color: var(--text0); border-color: var(--text1); }
+
+  /* 提交行 */
+  .submit-row { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+  .btn-submit {
+    padding: 9px 22px; border-radius: var(--radius); border: none;
+    font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+    transition: all .15s; display: flex; align-items: center; gap: 6px;
+  }
+  .btn-submit:hover { opacity: .85; transform: translateY(-1px); }
+  .btn-submit:active { opacity: .7; transform: translateY(0); }
+  .btn-primary { background: var(--purple); color: #fff; }
+  .btn-danger  { background: var(--red);    color: #fff; }
+  .btn-success { background: var(--green);  color: #000; }
+  .btn-auto {
+    font-size: 11px; padding: 6px 12px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: none; color: var(--text1);
+    cursor: pointer; font-family: inherit;
+  }
+  .btn-auto:hover { background: var(--bg2); }
+
+  /* 通知卡片 */
+  .notice {
+    display: flex; gap: 8px; padding: 10px 12px; border-radius: var(--radius);
+    margin-bottom: 14px; font-size: 12px; line-height: 1.5;
+  }
+  .notice.info { background: rgba(88,166,255,.08); border: 1px solid rgba(88,166,255,.2); color: var(--text1); }
+  .notice.warn { background: rgba(210,153,34,.08); border: 1px solid rgba(210,153,34,.25); color: #d29922; }
+  .notice.free { background: rgba(63,185,80,.07); border: 1px solid rgba(63,185,80,.2); color: var(--green); }
+  .notice-icon { flex-shrink: 0; font-size: 14px; }
+
+  /* 分割线 */
+  .divider { height: 1px; background: var(--border2); margin: 14px 0; }
+
+  /* ══ 右侧面板 ════════════════════════════════════════════════════════ */
+  .rpanel-tabs {
+    display: flex; border-bottom: 1px solid var(--border);
+    padding: 0 14px; flex-shrink: 0; background: var(--bg1);
+  }
+  .rtab-btn {
+    font-size: 11px; padding: 8px 10px; border: none; background: none;
+    color: var(--text2); cursor: pointer; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; font-family: inherit; transition: all .15s;
+  }
+  .rtab-btn.active { color: var(--purple); border-bottom-color: var(--purple); }
+  .rtab-btn:hover:not(.active) { color: var(--text0); }
+
+  /* 响应头部 */
+  .response-header {
+    padding: 10px 14px; display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid var(--border2); flex-shrink: 0; flex-wrap: wrap;
+  }
+  .status-pill {
+    font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px;
+  }
+  .s2xx { background: rgba(63,185,80,.15); color: var(--green); }
+  .s4xx { background: rgba(248,81,73,.15); color: var(--red); }
+  .s5xx { background: rgba(240,136,62,.15); color: var(--orange); }
+  .time-pill {
+    font-size: 11px; padding: 3px 8px; border-radius: 20px;
+    background: var(--bg2); color: var(--text2);
+  }
+  .size-pill {
+    font-size: 10px; padding: 2px 6px; border-radius: 20px;
+    background: var(--bg2); color: var(--text2);
+  }
+
+  /* 响应体 */
+  #response-pane { flex: 1; overflow-y: auto; }
+  #response-body {
+    padding: 12px 14px; font-size: 11px; line-height: 1.65;
+    white-space: pre-wrap; word-break: break-all;
+    font-family: 'SF Mono', Consolas, monospace; color: var(--text1);
+  }
+
+  /* 可视化响应 */
+  #viz-pane { flex: 1; overflow-y: auto; display: none; padding: 12px 14px; }
+  .viz-section { margin-bottom: 14px; }
+  .viz-title { font-size: 11px; font-weight: 600; color: var(--text1);
+               margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .kv-grid {
+    display: grid; grid-template-columns: auto 1fr; gap: 2px 12px;
+    background: var(--bg2); border-radius: var(--radius);
+    padding: 8px 10px; font-size: 11px;
+  }
+  .kv-key { color: var(--text2); white-space: nowrap; }
+  .kv-val { color: var(--text0); font-family: 'SF Mono', Consolas, monospace; word-break: break-all; }
+  .kv-val.ok   { color: var(--green); }
+  .kv-val.warn { color: var(--yellow); }
+  .kv-val.err  { color: var(--red); }
+
+  /* 迷你表格 */
+  .mini-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .mini-table th {
+    text-align: left; padding: 5px 8px; background: var(--bg2);
+    color: var(--text2); font-weight: 500; font-size: 10px; white-space: nowrap;
+  }
+  .mini-table td { padding: 5px 8px; border-top: 1px solid var(--border2); white-space: nowrap; }
+  .mini-table tr:hover td { background: rgba(255,255,255,.02); }
+
+  /* 进度条 */
+  .pbar-wrap { background: var(--bg2); border-radius: 20px; height: 5px; overflow: hidden; }
+  .pbar { height: 100%; border-radius: 20px; transition: width .5s; }
+  .pbar.green { background: var(--green); }
+  .pbar.yellow { background: var(--yellow); }
+  .pbar.red { background: var(--red); }
+
+  /* 健康卡片 */
+  .health-card-v2 {
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    overflow: hidden; margin-bottom: 10px;
+  }
+  .hc-head {
+    padding: 10px 14px; display: flex; align-items: center; gap: 10px;
+    background: var(--bg2);
+  }
+  .hc-id { font-weight: 600; font-size: 13px; flex: 1; }
+  .status-indicator {
+    display: flex; align-items: center; gap: 5px; font-size: 11px;
+    padding: 3px 10px; border-radius: 20px;
+  }
+  .si-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .si-ok  { background: rgba(63,185,80,.1); color: var(--green); }
+  .si-ok .si-dot  { background: var(--green); box-shadow: 0 0 5px var(--green); }
+  .si-err { background: rgba(248,81,73,.1); color: var(--red); }
+  .si-err .si-dot { background: var(--red); box-shadow: 0 0 5px var(--red); }
+  .si-warn { background: rgba(210,153,34,.1); color: var(--yellow); }
+  .si-warn .si-dot { background: var(--yellow); }
+  .hc-body { padding: 10px 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .hc-metric { font-size: 11px; color: var(--text2); }
+  .hc-metric span { color: var(--text0); }
+
+  /* 指标可视化 */
+  .metric-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 11px;
+  }
+  .metric-label { color: var(--text2); width: 70px; flex-shrink: 0; }
+  .metric-val { color: var(--text0); font-weight: 600; width: 60px; flex-shrink: 0; font-family: 'SF Mono', Consolas, monospace; }
+  .metric-bar { flex: 1; }
+
+  /* 历史记录 */
+  #history-pane { flex: 1; overflow-y: auto; display: none; }
+  .hist-item {
+    display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+    border-bottom: 1px solid var(--border2); cursor: pointer; transition: background .1s;
+  }
+  .hist-item:hover { background: rgba(255,255,255,.03); }
+  .hist-method { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; flex-shrink: 0; }
+  .hist-path { flex: 1; font-size: 11px; color: var(--text1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: 'SF Mono', Consolas, monospace; }
+  .hist-right { text-align: right; flex-shrink: 0; }
+  .hist-status { font-size: 10px; font-weight: 700; }
+  .hist-time { font-size: 9px; color: var(--text2); }
+  .s2xx-text { color: var(--green); }
+  .s4xx-text { color: var(--red); }
+  .serr-text  { color: var(--text2); }
+
+  /* raw curl pane */
+  #raw-pane { flex: 1; overflow-y: auto; display: none; }
+  #raw-body {
+    padding: 12px 14px; font-size: 11px; white-space: pre-wrap; word-break: break-all;
+    font-family: 'SF Mono', Consolas, monospace; color: var(--text1); line-height: 1.6;
+  }
+  .copy-raw {
+    font-size: 10px; padding: 3px 8px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: none; color: var(--text2);
+    cursor: pointer; margin: 8px 14px 0; font-family: inherit;
+  }
+  .copy-raw:hover { color: var(--text0); }
+
+  /* 空态 */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 40px 20px; text-align: center; gap: 8px;
+  }
+  .empty-icon { font-size: 28px; opacity: .3; }
+  .empty-text { font-size: 12px; color: var(--text2); }
+
+  /* 加载 */
+  .spinner { display: inline-block; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* JSON 着色 */
+  .jk { color: #79c0ff; }  .jstr { color: #a5d6ff; }
+  .jnum { color: var(--orange); }  .jbool { color: var(--purple); }
+  .jnull { color: var(--red); }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 10px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+
+  /* 全局面板隐藏 */
+  .pane { display: none; }
+  .pane.active { display: block; }
+
+  /* 分隔线+标签 */
+  .section-divider {
+    display: flex; align-items: center; gap: 10px; margin: 14px 0 10px;
+  }
+  .section-divider span { font-size: 10px; color: var(--text2); white-space: nowrap; font-weight: 600; }
+  .section-divider::before, .section-divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--border2);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Xt<span>Quant</span> Tester</div>
+  <div class="hbar-sep"></div>
+  <div class="hbar-field">
+    <label>服务地址</label>
+    <input class="hbar-input" id="h-base-url" type="text" value="http://localhost:8000" />
+  </div>
+  <div class="hbar-field">
+    <label>Token</label>
+    <input class="hbar-input" id="h-token" type="text" placeholder="本机无需填写" />
+  </div>
+  <div class="hbar-field">
+    <label>账号</label>
+    <select class="hbar-input" id="h-account">
+      <option value="">— 先注册账号 —</option>
+    </select>
+  </div>
+  <div class="hbar-sep"></div>
+  <div class="conn-badge" id="conn-badge">
+    <div class="conn-dot pulse" id="conn-dot"></div>
+    <span id="conn-text">连接中…</span>
+  </div>
+  <button class="hbar-btn" onclick="pingServer()">↺ 刷新</button>
+  <button class="hbar-btn" onclick="clearHistory()" style="margin-left:auto">清空历史</button>
+</header>
+
+<div class="main-layout">
+
+  <!-- ══ 侧边导航 ══ -->
+  <nav id="sidebar">
+    <div class="sidebar-search">
+      <input type="text" placeholder="搜索接口…" oninput="filterNav(this.value)" id="nav-search" />
+    </div>
+    <div class="nav-section">
+      <div class="nav-section-label">账号管理</div>
+      <button class="nav-btn active" data-panel="register" onclick="showPanel(this,'register')">
+        <span class="nav-method m-post">POST</span><span class="nav-label">注册账号</span>
+      </button>
+      <button class="nav-btn" data-panel="unregister" onclick="showPanel(this,'unregister')">
+        <span class="nav-method m-del">DEL</span><span class="nav-label">注销账号</span>
+      </button>
+      <button class="nav-btn" data-panel="list-accounts" onclick="showPanel(this,'list-accounts')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">账号列表</span>
+      </button>
+      <button class="nav-btn" data-panel="account-status" onclick="showPanel(this,'account-status')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">账号状态</span>
+      </button>
+    </div>
+    <div class="nav-section">
+      <div class="nav-section-label">交易操作</div>
+      <button class="nav-btn" data-panel="create-order" onclick="showPanel(this,'create-order')">
+        <span class="nav-method m-post">POST</span><span class="nav-label">下单</span>
+        <span class="nav-badge">⚠️</span>
+      </button>
+      <button class="nav-btn" data-panel="cancel-order" onclick="showPanel(this,'cancel-order')">
+        <span class="nav-method m-del">DEL</span><span class="nav-label">撤单</span>
+      </button>
+      <button class="nav-btn" data-panel="positions" onclick="showPanel(this,'positions')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">查询持仓</span>
+      </button>
+      <button class="nav-btn" data-panel="asset" onclick="showPanel(this,'asset')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">账户资产</span>
+      </button>
+      <button class="nav-btn" data-panel="orders" onclick="showPanel(this,'orders')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">当日委托</span>
+      </button>
+      <button class="nav-btn" data-panel="trades" onclick="showPanel(this,'trades')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">当日成交</span>
+      </button>
+    </div>
+    <div class="nav-section">
+      <div class="nav-section-label">行情操作</div>
+      <button class="nav-btn" data-panel="tick" onclick="showPanel(this,'tick')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">实时行情</span>
+      </button>
+      <button class="nav-btn" data-panel="history" onclick="showPanel(this,'history')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">历史行情</span>
+      </button>
+      <button class="nav-btn" data-panel="download" onclick="showPanel(this,'download')">
+        <span class="nav-method m-post">POST</span><span class="nav-label">下载数据</span>
+      </button>
+    </div>
+    <div class="nav-section">
+      <div class="nav-section-label">可观测性</div>
+      <button class="nav-btn" data-panel="health" onclick="showPanel(this,'health')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">健康总览</span>
+      </button>
+      <button class="nav-btn" data-panel="health-account" onclick="showPanel(this,'health-account')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">账号健康</span>
+      </button>
+      <button class="nav-btn" data-panel="metrics" onclick="showPanel(this,'metrics')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">全局指标</span>
+      </button>
+      <button class="nav-btn" data-panel="metrics-account" onclick="showPanel(this,'metrics-account')">
+        <span class="nav-method m-get">GET</span><span class="nav-label">账号指标</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ══ 工作区 ══ -->
+  <div id="workspace">
+
+    <!-- 端点标题 -->
+    <div id="endpoint-header">
+      <div class="ep-title">
+        <span id="ep-badge" class="nav-method m-post" style="font-size:10px;padding:2px 8px">POST</span>
+        <h2 id="ep-name">注册账号</h2>
+      </div>
+      <div class="ep-url">POST <code id="ep-path">/api/v1/accounts</code></div>
+      <div class="ep-tags" id="ep-tags">
+        <span class="ep-tag">HTTP 201</span>
+      </div>
+    </div>
+
+    <div id="work-body">
+      <!-- 表单区 -->
+      <div id="work-left">
+
+        <!-- ── 注册账号 ── -->
+        <div id="p-register" class="pane active">
+          <div class="notice info"><span class="notice-icon">💡</span>注册后账号自动出现在顶栏下拉列表，连接 QMT 需要客户端已启动并登录。</div>
+          <div class="grid2">
+            <div class="field-group">
+              <div class="field-label">account_id <span class="badge-req">必填</span></div>
+              <input class="field-input" id="reg-id" placeholder="如 25105132" />
+            </div>
+            <div class="field-group">
+              <div class="field-label">qmt_path <span class="badge-req">必填</span></div>
+              <input class="field-input" id="reg-path" placeholder="C:/光大证券/userdata_mini" />
+            </div>
+          </div>
+          <div class="grid3">
+            <div class="field-group">
+              <div class="field-label">account_type</div>
+              <select class="field-select" id="reg-type"><option value="STOCK">STOCK</option><option value="FUTURE">FUTURE</option></select>
+            </div>
+            <div class="field-group">
+              <div class="field-label">call_timeout (s) <span class="badge-opt">可选</span></div>
+              <input class="field-input" id="reg-timeout" type="number" value="3.0" step="0.5" />
+            </div>
+            <div class="field-group">
+              <div class="field-label">reconnect_interval (s) <span class="badge-opt">可选</span></div>
+              <input class="field-input" id="reg-reconnect" type="number" value="300" />
+            </div>
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doRegister()">
+              <span>📡</span> 注册并连接
+            </button>
+          </div>
+        </div>
+
+        <!-- ── 注销账号 ── -->
+        <div id="p-unregister" class="pane">
+          <div class="notice warn"><span class="notice-icon">⚠️</span>注销后该账号所有连接将关闭，需重新注册才能使用。</div>
+          <div class="field-group">
+            <div class="field-label">account_id <span class="badge-req">必填</span></div>
+            <input class="field-input" id="unreg-id" placeholder="输入或从顶栏选择当前账号" />
+            <div class="field-hint">留空时自动使用顶栏当前选中账号</div>
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-danger" onclick="doUnregister()">🗑️ 注销账号</button>
+          </div>
+        </div>
+
+        <!-- ── 账号列表 ── -->
+        <div id="p-list-accounts" class="pane">
+          <div class="notice info"><span class="notice-icon">📋</span>列出所有已注册的账号 ID，同时更新顶栏下拉列表。</div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doListAccounts()">🔍 获取列表</button>
+          </div>
+        </div>
+
+        <!-- ── 账号状态 ── -->
+        <div id="p-account-status" class="pane">
+          <div class="field-group">
+            <div class="field-label">account_id</div>
+            <input class="field-input" id="status-id" placeholder="留空使用当前账号" />
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doAccountStatus()">📊 查询状态</button>
+          </div>
+        </div>
+
+        <!-- ── 下单 ── -->
+        <div id="p-create-order" class="pane">
+          <div class="notice warn"><span class="notice-icon">⚠️</span><strong>实盘操作！</strong>下单将提交真实委托。请确认账号、股票代码、价格无误。</div>
+          <div class="presets">
+            <span style="font-size:10px;color:var(--text2);align-self:center">快速填充:</span>
+            <button class="preset-btn" onclick="fillOrder('buy')">买入示例</button>
+            <button class="preset-btn" onclick="fillOrder('sell')">卖出示例</button>
+          </div>
+          <div class="grid2">
+            <div class="field-group">
+              <div class="field-label">stock_code <span class="badge-req">必填</span></div>
+              <input class="field-input" id="ord-code" placeholder="000001.SZ" />
+            </div>
+            <div class="field-group">
+              <div class="field-label">order_type <span class="badge-req">必填</span></div>
+              <select class="field-select" id="ord-type">
+                <option value="23">23 — 买入</option>
+                <option value="24">24 — 卖出</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <div class="field-label">order_volume <span class="badge-req">必填</span></div>
+              <input class="field-input" id="ord-vol" type="number" placeholder="100" min="100" step="100" />
+            </div>
+            <div class="field-group">
+              <div class="field-label">price <span class="badge-req">必填</span></div>
+              <input class="field-input" id="ord-price" type="number" placeholder="10.00" step="0.01" />
+            </div>
+            <div class="field-group">
+              <div class="field-label">price_type</div>
+              <select class="field-select" id="ord-ptype">
+                <option value="11">11 — 限价</option>
+                <option value="5">5 — 市价</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <div class="field-label">strategy_name <span class="badge-opt">可选</span></div>
+              <input class="field-input" id="ord-strategy" placeholder="测试标识" />
+            </div>
+          </div>
+          <div class="field-group">
+            <div class="field-label">order_remark <span class="badge-opt">可选</span></div>
+            <input class="field-input" id="ord-remark" placeholder="备注" />
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-danger" onclick="doCreateOrder()">📤 提交下单</button>
+          </div>
+        </div>
+
+        <!-- ── 撤单 ── -->
+        <div id="p-cancel-order" class="pane">
+          <div class="notice info"><span class="notice-icon">💡</span>order_id 从下单响应或当日委托列表获取。</div>
+          <div class="field-group">
+            <div class="field-label">order_id <span class="badge-req">必填</span></div>
+            <input class="field-input" id="cancel-oid" type="number" placeholder="委托 ID" />
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-danger" onclick="doCancelOrder()">🚫 撤销委托</button>
+          </div>
+        </div>
+
+        <!-- ── 持仓 ── -->
+        <div id="p-positions" class="pane">
+          <div class="notice info"><span class="notice-icon">💼</span>返回当前账号持仓列表，包含股票代码、数量、成本价等信息。</div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doPositions()">💼 查询持仓</button>
+          </div>
+        </div>
+
+        <!-- ── 资产 ── -->
+        <div id="p-asset" class="pane">
+          <div class="notice info"><span class="notice-icon">💰</span>返回账户可用资金、冻结资金、总资产等。</div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doAsset()">💰 查询资产</button>
+          </div>
+        </div>
+
+        <!-- ── 委托 ── -->
+        <div id="p-orders" class="pane">
+          <div class="notice info"><span class="notice-icon">📋</span>返回今日全部委托记录（含已成、未成、撤单）。</div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doOrders()">📋 查询委托</button>
+          </div>
+        </div>
+
+        <!-- ── 成交 ── -->
+        <div id="p-trades" class="pane">
+          <div class="notice info"><span class="notice-icon">✅</span>返回今日全部成交回报。</div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doTrades()">✅ 查询成交</button>
+          </div>
+        </div>
+
+        <!-- ── 实时行情 ── -->
+        <div id="p-tick" class="pane">
+          <div class="presets">
+            <span style="font-size:10px;color:var(--text2);align-self:center">快速填充:</span>
+            <button class="preset-btn" onclick="setVal('tick-codes','000001.SZ')">平安银行</button>
+            <button class="preset-btn" onclick="setVal('tick-codes','600036.SH')">招商银行</button>
+            <button class="preset-btn" onclick="setVal('tick-codes','000001.SZ,600036.SH,300750.SZ')">批量3支</button>
+          </div>
+          <div class="field-group">
+            <div class="field-label">stock_codes <span class="badge-req">必填</span></div>
+            <input class="field-input" id="tick-codes" placeholder="000001.SZ,600036.SH（逗号分隔）" />
+            <div class="field-hint">支持多股批量查询，逗号分隔</div>
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doTick()">📈 获取行情</button>
+          </div>
+        </div>
+
+        <!-- ── 历史行情 ── -->
+        <div id="p-history" class="pane">
+          <div class="grid2">
+            <div class="field-group">
+              <div class="field-label">stock_code <span class="badge-req">必填</span></div>
+              <input class="field-input" id="hist-code" placeholder="000001.SZ" />
+            </div>
+            <div class="field-group">
+              <div class="field-label">period</div>
+              <select class="field-select" id="hist-period">
+                <option value="1d">1d — 日线</option>
+                <option value="1h">1h — 小时线</option>
+                <option value="30m">30m</option>
+                <option value="15m">15m</option>
+                <option value="5m">5m</option>
+                <option value="1m">1m</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <div class="field-label">start_time</div>
+              <input class="field-input" id="hist-start" value="20240101" placeholder="YYYYMMDD" />
+            </div>
+            <div class="field-group">
+              <div class="field-label">end_time <span class="badge-opt">可选</span></div>
+              <input class="field-input" id="hist-end" placeholder="留空=今天" />
+            </div>
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doHistory()">📊 获取历史</button>
+          </div>
+        </div>
+
+        <!-- ── 下载数据 ── -->
+        <div id="p-download" class="pane">
+          <div class="notice info"><span class="notice-icon">⬇️</span>将历史行情数据下载到 QMT 本地，下载完成后可通过历史行情接口查询。</div>
+          <div class="grid2">
+            <div class="field-group">
+              <div class="field-label">stock_code <span class="badge-req">必填</span></div>
+              <input class="field-input" id="dl-code" placeholder="000001.SZ" />
+            </div>
+            <div class="field-group">
+              <div class="field-label">period</div>
+              <select class="field-select" id="dl-period">
+                <option value="1d">1d</option><option value="1h">1h</option>
+                <option value="30m">30m</option><option value="5m">5m</option><option value="1m">1m</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <div class="field-label">start_time</div>
+              <input class="field-input" id="dl-start" value="20200101" />
+            </div>
+            <div class="field-group">
+              <div class="field-label">end_time <span class="badge-opt">可选</span></div>
+              <input class="field-input" id="dl-end" placeholder="留空=今天" />
+            </div>
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-success" onclick="doDownload()">⬇️ 开始下载</button>
+          </div>
+        </div>
+
+        <!-- ── 健康总览 ── -->
+        <div id="p-health" class="pane">
+          <div class="notice free"><span class="notice-icon">🟢</span><strong>无需认证</strong> — 此接口供监控系统轮询，本机或外部监控可直接访问。</div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doHealth()">🏥 查询健康</button>
+            <button class="btn-auto" onclick="startAutoRefresh()">自动刷新 5s</button>
+          </div>
+          <div id="health-cards-v2" style="margin-top:14px"></div>
+        </div>
+
+        <!-- ── 账号健康 ── -->
+        <div id="p-health-account" class="pane">
+          <div class="notice free"><span class="notice-icon">🟢</span>无需认证。</div>
+          <div class="field-group">
+            <div class="field-label">account_id</div>
+            <input class="field-input" id="health-acc-id" placeholder="留空使用当前账号" />
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doHealthAccount()">🔍 查询</button>
+          </div>
+        </div>
+
+        <!-- ── 全局指标 ── -->
+        <div id="p-metrics" class="pane">
+          <div class="notice info"><span class="notice-icon">📊</span>获取所有账号的 API 调用统计，包含成功率、延迟分布、错误信息。</div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doMetrics()">📊 获取指标</button>
+          </div>
+        </div>
+
+        <!-- ── 账号指标 ── -->
+        <div id="p-metrics-account" class="pane">
+          <div class="field-group">
+            <div class="field-label">account_id</div>
+            <input class="field-input" id="metrics-acc-id" placeholder="留空使用当前账号" />
+          </div>
+          <div class="submit-row">
+            <button class="btn-submit btn-primary" onclick="doMetricsAccount()">📊 获取指标</button>
+          </div>
+        </div>
+
+      </div><!-- /work-left -->
+
+      <!-- ══ 右侧响应面板 ══ -->
+      <div id="work-right">
+        <div class="rpanel-tabs">
+          <button class="rtab-btn active" data-tab="response" onclick="switchTab(this,'response')">响应</button>
+          <button class="rtab-btn" data-tab="viz" onclick="switchTab(this,'viz')">可视化</button>
+          <button class="rtab-btn" data-tab="history" onclick="switchTab(this,'history')">历史</button>
+          <button class="rtab-btn" data-tab="raw" onclick="switchTab(this,'raw')">cURL</button>
+        </div>
+        <div class="response-header" id="resp-header">
+          <span class="status-pill s2xx" id="resp-status" style="display:none"></span>
+          <span class="time-pill" id="resp-time" style="display:none"></span>
+          <span class="size-pill" id="resp-size" style="display:none"></span>
+        </div>
+
+        <!-- 响应 JSON -->
+        <div id="response-pane">
+          <div id="response-body">
+            <div class="empty-state">
+              <div class="empty-icon">📡</div>
+              <div class="empty-text">发起请求后在此查看响应</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 可视化 -->
+        <div id="viz-pane"></div>
+
+        <!-- 历史 -->
+        <div id="history-pane">
+          <div id="hist-list"></div>
+        </div>
+
+        <!-- cURL -->
+        <div id="raw-pane">
+          <button class="copy-raw" onclick="copyRaw()">复制 cURL</button>
+          <div id="raw-body">发起请求后可查看等效 curl 命令…</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /main-layout -->
+
+<script>
+// ══ 全局状态 ════════════════════════════════════════════════════════════════
+const reqHistory = [];
+let autoRefreshTimer = null;
+let lastRawCmd = '';
+
+// ══ 工具 ════════════════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const baseUrl = () => $('h-base-url').value.replace(/\/$/, '');
+const token   = () => $('h-token').value;
+const acctId  = () => $('h-account').value;
+
+function setVal(id, v) { $(id).value = v; }
+function escH(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ══ 导航 ════════════════════════════════════════════════════════════════════
+const PANEL_META = {
+  'register':        { method:'POST', label:'注册账号',   path:'/api/v1/accounts', tags:['HTTP 201'] },
+  'unregister':      { method:'DEL',  label:'注销账号',   path:'/api/v1/accounts/{account_id}', tags:[] },
+  'list-accounts':   { method:'GET',  label:'账号列表',   path:'/api/v1/accounts', tags:[] },
+  'account-status':  { method:'GET',  label:'账号状态',   path:'/api/v1/accounts/{account_id}/status', tags:[] },
+  'create-order':    { method:'POST', label:'下单',        path:'/api/v1/accounts/{account_id}/orders', tags:['HTTP 201','danger:实盘操作'] },
+  'cancel-order':    { method:'DEL',  label:'撤单',        path:'/api/v1/accounts/{account_id}/orders/{order_id}', tags:[] },
+  'positions':       { method:'GET',  label:'查询持仓',   path:'/api/v1/accounts/{account_id}/positions', tags:[] },
+  'asset':           { method:'GET',  label:'账户资产',   path:'/api/v1/accounts/{account_id}/asset', tags:[] },
+  'orders':          { method:'GET',  label:'当日委托',   path:'/api/v1/accounts/{account_id}/orders', tags:[] },
+  'trades':          { method:'GET',  label:'当日成交',   path:'/api/v1/accounts/{account_id}/trades', tags:[] },
+  'tick':            { method:'GET',  label:'实时行情',   path:'/api/v1/market/tick', tags:[] },
+  'history':         { method:'GET',  label:'历史行情',   path:'/api/v1/market/history', tags:[] },
+  'download':        { method:'POST', label:'下载数据',   path:'/api/v1/market/download', tags:[] },
+  'health':          { method:'GET',  label:'健康总览',   path:'/api/v1/health', tags:['auth-free:无需认证'] },
+  'health-account':  { method:'GET',  label:'账号健康',   path:'/api/v1/health/{account_id}', tags:['auth-free:无需认证'] },
+  'metrics':         { method:'GET',  label:'全局指标',   path:'/api/v1/metrics', tags:[] },
+  'metrics-account': { method:'GET',  label:'账号指标',   path:'/api/v1/metrics/{account_id}', tags:[] },
+};
+
+function showPanel(btn, panelId) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  $('p-' + panelId).classList.add('active');
+
+  // 更新端点标题
+  const meta = PANEL_META[panelId] || {};
+  const mClass = { GET:'m-get', POST:'m-post', DEL:'m-del' }[meta.method] || 'm-get';
+  $('ep-badge').className = `nav-method ${mClass}`;
+  $('ep-badge').textContent = meta.method;
+  $('ep-name').textContent = meta.label || panelId;
+  $('ep-path').textContent = meta.path || '';
+
+  // 标签
+  const tagsEl = $('ep-tags');
+  tagsEl.innerHTML = (meta.tags || []).map(t => {
+    const [cls, txt] = t.includes(':') ? t.split(':') : ['', t];
+    return `<span class="ep-tag ${cls}">${escH(txt)}</span>`;
+  }).join('');
+
+  // 自动填当前账号
+  ['unreg-id','status-id','health-acc-id','metrics-acc-id'].forEach(fid => {
+    const el = $(fid); if (el && !el.value) el.value = acctId();
+  });
+}
+
+function filterNav(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    const text = btn.textContent.toLowerCase();
+    btn.style.display = !q || text.includes(q) ? '' : 'none';
+  });
+  document.querySelectorAll('.nav-section').forEach(sec => {
+    const vis = [...sec.querySelectorAll('.nav-btn')].some(b => b.style.display !== 'none');
+    sec.style.display = vis ? '' : 'none';
+  });
+}
+
+// ══ 右侧标签 ════════════════════════════════════════════════════════════════
+function switchTab(btn, tab) {
+  document.querySelectorAll('.rtab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  ['response-pane','viz-pane','history-pane','raw-pane'].forEach(id => {
+    $(id).style.display = id === tab + '-pane' ? 'block' : 'none';
+  });
+}
+
+// ══ HTTP 请求 ════════════════════════════════════════════════════════════════
+async function req(method, path, body = null, noToken = false) {
+  const url = baseUrl() + path;
+  const hdrs = { 'Content-Type': 'application/json' };
+  if (!noToken && token()) hdrs['X-API-Token'] = token();
+  const opts = { method, headers: hdrs };
+  if (body) opts.body = JSON.stringify(body);
+  lastRawCmd = buildCurl(method, url, hdrs, body);
+  $('raw-body').textContent = lastRawCmd;
+
+  setLoading();
+  const t0 = performance.now();
+  try {
+    const res  = await fetch(url, opts);
+    const ms   = Math.round(performance.now() - t0);
+    const data = await res.json();
+    const raw  = JSON.stringify(data);
+    displayResponse(res.status, ms, raw.length, data);
+    addToHistory(method, path, res.status, ms, data);
+    renderViz(data, path);
+    return { ok: res.ok, status: res.status, data };
+  } catch (e) {
+    const ms = Math.round(performance.now() - t0);
+    displayError(e.message);
+    addToHistory(method, path, 0, ms, null);
+    return { ok: false, error: e.message };
+  }
+}
+
+function buildCurl(method, url, hdrs, body) {
+  let c = `curl -X ${method} \\\n  "${url}"`;
+  Object.entries(hdrs).forEach(([k,v]) => { c += ` \\\n  -H "${k}: ${v}"`; });
+  if (body) c += ` \\\n  -d '${JSON.stringify(body, null, 2).replace(/'/g, "'\\''")}'`;
+  return c;
+}
+
+// ══ 响应显示 ════════════════════════════════════════════════════════════════
+function setLoading() {
+  $('resp-status').style.display = 'none';
+  $('resp-time').style.display = 'none';
+  $('resp-size').style.display = 'none';
+  $('response-body').innerHTML = '<div class="empty-state"><div class="empty-icon"><span class="spinner">⏳</span></div><div class="empty-text">请求中…</div></div>';
+  $('viz-pane').innerHTML = '';
+}
+
+function displayResponse(status, ms, bytes, data) {
+  const sp = $('resp-status');
+  sp.style.display = 'inline-block';
+  sp.textContent = status;
+  sp.className = 'status-pill ' + (status < 300 ? 's2xx' : status < 500 ? 's4xx' : 's5xx');
+
+  $('resp-time').style.display = 'inline-block';
+  $('resp-time').textContent = ms + 'ms';
+  $('resp-time').style.color = ms < 200 ? 'var(--green)' : ms < 1000 ? 'var(--yellow)' : 'var(--red)';
+
+  $('resp-size').style.display = 'inline-block';
+  $('resp-size').textContent = bytes > 1024 ? (bytes/1024).toFixed(1) + 'KB' : bytes + 'B';
+
+  $('response-body').innerHTML = colorJson(JSON.stringify(data, null, 2));
+}
+
+function displayError(msg) {
+  $('resp-status').style.display = 'none';
+  $('resp-time').textContent = '错误';
+  $('resp-time').style.display = 'inline-block';
+  $('response-body').innerHTML = `<div style="color:var(--red);padding:12px">❌ 连接失败\n\n${escH(msg)}\n\n请检查服务地址是否正确</div>`;
+}
+
+function colorJson(json) {
+  return escH(json).replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    m => {
+      let cls = 'jnum';
+      if (/^"/.test(m)) cls = /:$/.test(m) ? 'jk' : 'jstr';
+      else if (/true|false/.test(m)) cls = 'jbool';
+      else if (/null/.test(m)) cls = 'jnull';
+      return `<span class="${cls}">${m}</span>`;
+    }
+  );
+}
+
+// ══ 可视化 ══════════════════════════════════════════════════════════════════
+function renderViz(data, path) {
+  const viz = $('viz-pane');
+  if (!data?.data) { viz.innerHTML = '<div class="empty-state"><div class="empty-text">此接口无可视化数据</div></div>'; return; }
+  const d = data.data;
+
+  // 账号状态
+  if (d.connected !== undefined && d.account_id !== undefined) {
+    viz.innerHTML = renderStatusCard(d); return;
+  }
+  // 健康总览
+  if (d.accounts && d.total !== undefined) {
+    viz.innerHTML = renderHealthOverview(d); return;
+  }
+  // 指标
+  if (d.total_calls !== undefined) {
+    viz.innerHTML = renderMetricsViz(d); return;
+  }
+  // 持仓列表
+  if (d.positions && Array.isArray(d.positions)) {
+    viz.innerHTML = renderPositions(d.positions); return;
+  }
+  // 资产
+  if (d.total_asset !== undefined || d.cash !== undefined || d.frozen_cash !== undefined) {
+    viz.innerHTML = renderAsset(d); return;
+  }
+  // 委托/成交列表
+  if (d.orders && Array.isArray(d.orders)) {
+    viz.innerHTML = renderOrderList(d.orders, '委托'); return;
+  }
+  if (d.trades && Array.isArray(d.trades)) {
+    viz.innerHTML = renderOrderList(d.trades, '成交'); return;
+  }
+  // 账号列表
+  if (d.accounts && Array.isArray(d.accounts)) {
+    viz.innerHTML = `<div class="viz-section"><div class="viz-title">📋 已注册账号 (${d.accounts.length})</div>
+      ${d.accounts.map(a => `<div style="padding:6px 10px;background:var(--bg2);border-radius:4px;margin-bottom:4px;font-family:monospace;font-size:12px;color:var(--blue)">${escH(a)}</div>`).join('')}</div>`; return;
+  }
+  viz.innerHTML = '<div class="empty-state"><div class="empty-text">此响应无专属可视化视图</div></div>';
+}
+
+function renderStatusCard(d) {
+  const ok = d.connected;
+  return `<div class="viz-section"><div class="viz-title">🔌 连接状态</div>
+    <div class="health-card-v2">
+      <div class="hc-head">
+        <div class="hc-id">${escH(d.account_id)}</div>
+        <div class="status-indicator ${ok ? 'si-ok' : 'si-err'}">
+          <div class="si-dot"></div>${ok ? '已连接' : '已断开'}
+        </div>
+      </div>
+      <div class="hc-body">
+        <div class="hc-metric">xtdata <span style="color:${d.xtdata_available?'var(--green)':'var(--red)'}">${d.xtdata_available?'✅ 可用':'❌ 不可用'}</span></div>
+        <div class="hc-metric">xttrader <span style="color:${d.xttrader_available?'var(--green)':'var(--red)'}">${d.xttrader_available?'✅ 可用':'❌ 不可用'}</span></div>
+        <div class="hc-metric">重连中 <span>${d.reconnecting?'<span style="color:var(--yellow)">是</span>':'否'}</span></div>
+        <div class="hc-metric">重连次数 <span style="font-family:monospace">${d.reconnect_attempts||0}</span></div>
+      </div>
+    </div></div>`;
+}
+
+function renderHealthOverview(d) {
+  const healthy = d.healthy, total = d.total;
+  const pct = total > 0 ? Math.round(healthy/total*100) : 0;
+  const barCls = pct === 100 ? 'green' : pct > 50 ? 'yellow' : 'red';
+  const cards = Object.entries(d.accounts).map(([id, s]) => {
+    const ok = s.connected;
+    return `<div class="health-card-v2">
+      <div class="hc-head">
+        <div class="hc-id">${escH(id)}</div>
+        <div class="status-indicator ${ok ? 'si-ok' : s.reconnecting ? 'si-warn' : 'si-err'}">
+          <div class="si-dot"></div>${ok ? '已连接' : s.reconnecting ? '重连中' : '已断开'}
+        </div>
+      </div>
+      <div class="hc-body">
+        <div class="hc-metric">xtdata <span style="color:${s.xtdata_available?'var(--green)':'var(--red)'}">${s.xtdata_available?'✅':'❌'}</span></div>
+        <div class="hc-metric">xttrader <span style="color:${s.xttrader_available?'var(--green)':'var(--red)'}">${s.xttrader_available?'✅':'❌'}</span></div>
+        <div class="hc-metric">重连次数 <span style="font-family:monospace">${s.reconnect_attempts||0}</span></div>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="viz-section">
+    <div class="viz-title">🌐 总览 — ${healthy}/${total} 健康 (${pct}%)</div>
+    <div style="margin-bottom:10px">
+      <div class="pbar-wrap"><div class="pbar ${barCls}" style="width:${pct}%"></div></div>
+    </div>
+    ${cards}
+  </div>`;
+}
+
+function renderMetricsViz(d) {
+  const sr = d.total_calls > 0 ? (d.success_calls/d.total_calls*100).toFixed(1) : '0';
+  const erPct = d.total_calls > 0 ? (d.error_calls/d.total_calls*100) : 0;
+  const barCls = erPct < 5 ? 'green' : erPct < 20 ? 'yellow' : 'red';
+  return `<div class="viz-section">
+    <div class="viz-title">📊 调用统计</div>
+    <div class="kv-grid">
+      <div class="kv-key">总调用</div><div class="kv-val">${d.total_calls}</div>
+      <div class="kv-key">成功率</div><div class="kv-val ${erPct<5?'ok':erPct<20?'warn':'err'}">${sr}%</div>
+      <div class="kv-key">成功</div><div class="kv-val ok">${d.success_calls}</div>
+      <div class="kv-key">错误</div><div class="kv-val err">${d.error_calls}</div>
+      <div class="kv-key">超时</div><div class="kv-val warn">${d.timeout_calls}</div>
+    </div>
+    <div style="margin-top:10px"><div class="viz-title">⏱ 延迟分布</div></div>
+    ${renderLatencyBar('平均', d.avg_latency_ms)}
+    ${renderLatencyBar('P50', d.p50_latency_ms)}
+    ${renderLatencyBar('P95', d.p95_latency_ms)}
+    ${d.last_error_msg ? `<div style="margin-top:10px;padding:8px 10px;background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.2);border-radius:4px;font-size:11px;color:var(--red)">最近错误: ${escH(d.last_error_msg)}</div>` : ''}
+  </div>`;
+}
+
+function renderLatencyBar(label, ms) {
+  const safe = ms || 0;
+  const pct = Math.min(safe / 3000 * 100, 100);
+  const cls = safe < 200 ? 'green' : safe < 1000 ? 'yellow' : 'red';
+  return `<div class="metric-row">
+    <div class="metric-label">${label}</div>
+    <div class="metric-val">${safe.toFixed(0)}ms</div>
+    <div class="metric-bar"><div class="pbar-wrap"><div class="pbar ${cls}" style="width:${pct}%"></div></div></div>
+  </div>`;
+}
+
+function renderPositions(positions) {
+  if (!positions.length) return '<div class="empty-state"><div class="empty-text">无持仓</div></div>';
+  return `<div class="viz-section"><div class="viz-title">💼 持仓列表 (${positions.length})</div>
+    <table class="mini-table">
+      <thead><tr><th>股票代码</th><th>持仓量</th><th>可用量</th><th>成本价</th></tr></thead>
+      <tbody>${positions.map(p => `<tr>
+        <td style="font-family:monospace;color:var(--cyan)">${escH(p.stock_code||p.stockCode||'-')}</td>
+        <td>${p.volume||'-'}</td>
+        <td>${p.available||'-'}</td>
+        <td>${p.cost_price||p.costPrice||'-'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+function renderAsset(d) {
+  return `<div class="viz-section"><div class="viz-title">💰 账户资产</div>
+    <div class="kv-grid">
+      ${Object.entries(d).filter(([k]) => !k.startsWith('_')).map(([k,v]) =>
+        `<div class="kv-key">${escH(k)}</div><div class="kv-val">${escH(String(v))}</div>`
+      ).join('')}
+    </div></div>`;
+}
+
+function renderOrderList(list, label) {
+  if (!list.length) return `<div class="empty-state"><div class="empty-text">无${label}记录</div></div>`;
+  const keys = Object.keys(list[0]).slice(0, 5);
+  return `<div class="viz-section"><div class="viz-title">📋 ${label}列表 (${list.length})</div>
+    <table class="mini-table">
+      <thead><tr>${keys.map(k=>`<th>${escH(k)}</th>`).join('')}</tr></thead>
+      <tbody>${list.map(row=>`<tr>${keys.map(k=>`<td>${escH(String(row[k]??'-'))}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+// ══ 历史记录 ════════════════════════════════════════════════════════════════
+function addToHistory(method, path, status, ms, data) {
+  reqHistory.unshift({ method, path, status, ms, data, time: new Date().toLocaleTimeString() });
+  if (reqHistory.length > 100) reqHistory.pop();
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = $('hist-list');
+  if (!reqHistory.length) { list.innerHTML = '<div class="empty-state"><div class="empty-text">暂无历史记录</div></div>'; return; }
+  list.innerHTML = reqHistory.map((h, i) => {
+    const mCls = {GET:'m-get',POST:'m-post',DELETE:'m-del',DEL:'m-del'}[h.method]||'m-get';
+    const sCls = h.status === 0 ? 'serr-text' : h.status < 300 ? 's2xx-text' : 's4xx-text';
+    return `<div class="hist-item" onclick="loadHistItem(${i})">
+      <span class="hist-method nav-method ${mCls}">${h.method}</span>
+      <span class="hist-path" title="${escH(h.path)}">${escH(h.path)}</span>
+      <div class="hist-right">
+        <div class="hist-status ${sCls}">${h.status || 'ERR'} · ${h.ms}ms</div>
+        <div class="hist-time">${h.time}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function loadHistItem(i) {
+  const h = reqHistory[i];
+  if (!h.data) return;
+  displayResponse(h.status, h.ms, JSON.stringify(h.data).length, h.data);
+  renderViz(h.data, h.path);
+  // 切到响应 tab
+  document.querySelector('.rtab-btn[data-tab="response"]').click();
+}
+
+function clearHistory() {
+  reqHistory.length = 0;
+  renderHistory();
+}
+
+function copyRaw() {
+  navigator.clipboard.writeText(lastRawCmd).then(() => {
+    const btn = document.querySelector('.copy-raw');
+    btn.textContent = '✅ 已复制';
+    setTimeout(() => { btn.textContent = '复制 cURL'; }, 1500);
+  });
+}
+
+// ══ 服务连接 ════════════════════════════════════════════════════════════════
+async function pingServer() {
+  const dot = $('conn-dot'), txt = $('conn-text');
+  dot.className = 'conn-dot pulse';
+  txt.textContent = '检测中…';
+  try {
+    const res  = await fetch(baseUrl() + '/api/v1/health');
+    const data = await res.json();
+    dot.className = 'conn-dot ok';
+    const healthy = data.data?.healthy || 0, total = data.data?.total || 0;
+    txt.textContent = `在线  ${healthy}/${total}`;
+    // 同步账号到下拉
+    Object.keys(data.data?.accounts || {}).forEach(addAccount);
+  } catch {
+    dot.className = 'conn-dot err';
+    txt.textContent = '无法连接';
+  }
+}
+
+function addAccount(id) {
+  const sel = $('h-account');
+  for (let o of sel.options) { if (o.value === id) return; }
+  const opt = new Option(id, id);
+  sel.appendChild(opt);
+  if (sel.options.length === 2) sel.value = id; // 第一个真实账号自动选中
+}
+
+function removeAccount(id) {
+  const sel = $('h-account');
+  for (let i = sel.options.length - 1; i >= 0; i--) {
+    if (sel.options[i].value === id) sel.remove(i);
+  }
+}
+
+// ══ 自动刷新 ════════════════════════════════════════════════════════════════
+function startAutoRefresh() {
+  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; return; }
+  autoRefreshTimer = setInterval(doHealth, 5000);
+  doHealth();
+}
+
+// ══ 快速填充 ════════════════════════════════════════════════════════════════
+function fillOrder(type) {
+  setVal('ord-code', '000001.SZ');
+  $('ord-type').value = type === 'buy' ? '23' : '24';
+  setVal('ord-vol', '100');
+  setVal('ord-price', '10.00');
+}
+
+// ══ API 调用 ════════════════════════════════════════════════════════════════
+async function doRegister() {
+  const id = $('reg-id').value, path = $('reg-path').value;
+  if (!id || !path) return alert('account_id 和 qmt_path 为必填');
+  const body = { account_id: id, qmt_path: path, account_type: $('reg-type').value,
+    call_timeout: +$('reg-timeout').value||3, reconnect_interval: +$('reg-reconnect').value||300 };
+  const r = await req('POST', '/api/v1/accounts', body);
+  if (r.ok) addAccount(id);
+}
+
+async function doUnregister() {
+  const id = $('unreg-id').value || acctId(); if (!id) return alert('请输入 account_id');
+  const r = await req('DELETE', `/api/v1/accounts/${id}`);
+  if (r.ok) removeAccount(id);
+}
+
+async function doListAccounts() {
+  const r = await req('GET', '/api/v1/accounts');
+  if (r.ok && Array.isArray(r.data?.data?.accounts)) r.data.data.accounts.forEach(addAccount);
+}
+
+async function doAccountStatus() {
+  const id = $('status-id').value || acctId(); if (!id) return alert('请输入 account_id');
+  await req('GET', `/api/v1/accounts/${id}/status`);
+}
+
+async function doCreateOrder() {
+  const id = acctId(); if (!id) return alert('请先选择账号');
+  const body = {
+    stock_code: $('ord-code').value, order_type: +$('ord-type').value,
+    order_volume: +$('ord-vol').value, price_type: +$('ord-ptype').value,
+    price: +$('ord-price').value, strategy_name: $('ord-strategy').value, order_remark: $('ord-remark').value,
+  };
+  if (!body.stock_code || !body.order_volume || !body.price) return alert('请填写必填字段');
+  await req('POST', `/api/v1/accounts/${id}/orders`, body);
+}
+
+async function doCancelOrder() {
+  const id = acctId(); if (!id) return alert('请先选择账号');
+  const oid = $('cancel-oid').value; if (!oid) return alert('请输入 order_id');
+  await req('DELETE', `/api/v1/accounts/${id}/orders/${oid}`);
+}
+
+async function doPositions()  { const id = acctId(); if (!id) return alert('请先选择账号'); await req('GET', `/api/v1/accounts/${id}/positions`); }
+async function doAsset()      { const id = acctId(); if (!id) return alert('请先选择账号'); await req('GET', `/api/v1/accounts/${id}/asset`); }
+async function doOrders()     { const id = acctId(); if (!id) return alert('请先选择账号'); await req('GET', `/api/v1/accounts/${id}/orders`); }
+async function doTrades()     { const id = acctId(); if (!id) return alert('请先选择账号'); await req('GET', `/api/v1/accounts/${id}/trades`); }
+
+async function doTick() {
+  const id = acctId(); if (!id) return alert('请先选择账号');
+  const codes = $('tick-codes').value; if (!codes) return alert('请输入股票代码');
+  await req('GET', `/api/v1/market/tick?stock_codes=${encodeURIComponent(codes)}&account_id=${id}`);
+}
+
+async function doHistory() {
+  const id = acctId(); if (!id) return alert('请先选择账号');
+  const code = $('hist-code').value; if (!code) return alert('请输入股票代码');
+  const q = `stock_code=${code}&account_id=${id}&period=${$('hist-period').value}&start_time=${$('hist-start').value}` + ($('hist-end').value ? `&end_time=${$('hist-end').value}` : '');
+  await req('GET', `/api/v1/market/history?${q}`);
+}
+
+async function doDownload() {
+  const id = acctId(); if (!id) return alert('请先选择账号');
+  const code = $('dl-code').value; if (!code) return alert('请输入股票代码');
+  await req('POST', '/api/v1/market/download', {
+    account_id: id, stock_code: code, period: $('dl-period').value,
+    start_time: $('dl-start').value, end_time: $('dl-end').value,
+  });
+}
+
+async function doHealth() {
+  const r = await req('GET', '/api/v1/health', null, true);
+  if (r.ok && r.data?.data?.accounts) {
+    const cards = document.getElementById('health-cards-v2');
+    if (cards) cards.innerHTML = renderHealthOverview(r.data.data);
+  }
+}
+
+async function doHealthAccount() {
+  const id = $('health-acc-id').value || acctId(); if (!id) return alert('请输入 account_id');
+  await req('GET', `/api/v1/health/${id}`, null, true);
+}
+
+async function doMetrics()        { await req('GET', '/api/v1/metrics'); }
+async function doMetricsAccount() {
+  const id = $('metrics-acc-id').value || acctId(); if (!id) return alert('请输入 account_id');
+  await req('GET', `/api/v1/metrics/${id}`);
+}
+
+// ══ 初始化 ══════════════════════════════════════════════════════════════════
+pingServer();
+</script>
+</body>
+</html>
