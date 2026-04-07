@@ -7,6 +7,7 @@ FastAPI 路由定义
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 
@@ -64,6 +65,14 @@ def create_app(security_config: Optional[SecurityConfig] = None) -> FastAPI:
     # 注册安全中间件
     from .security import create_security_middleware
     app.add_middleware(create_security_middleware(security_config))
+
+    # CORS：允许本地 HTML 文件（file://）和常用本地开发地址访问
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # 将安全配置存入 app.state，供路由访问
     app.state.security_config = security_config
