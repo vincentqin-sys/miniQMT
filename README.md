@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-BSL%201.1-blue)](LICENSE)
 [![QMT API](https://img.shields.io/badge/QMT-API-orange)](https://dict.thinktrader.net)
 
 **基于迅投QMT API的智能量化交易系统**
@@ -398,7 +398,15 @@ ENABLE_GRID_TRADING = False
 
 ## 📄 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+**Business Source License 1.1 (BSL 1.1)**
+
+- **个人/非商业用途**：免费使用、修改、学习
+- **商业用途**（含收费项目、商业产品集成）：需获得作者授权
+- **2030-04-13 后**：自动转为 MIT 开源协议
+
+v1.x 及之前的版本仍以 MIT 协议发布，不受影响。详见 [LICENSE](LICENSE) 文件。
+
+如需商业授权，请通过 [GitHub Issue](https://github.com/weihong-su/miniQMT/issues) 联系。
 
 ---
 
@@ -412,8 +420,8 @@ ENABLE_GRID_TRADING = False
 
 如有问题或建议,请通过以下方式联系:
 
-- 提交 [GitHub Issue](https://github.com/your-repo/miniQMT/issues)
-- 邮箱: your-email@example.com
+- 提交 [GitHub Issue](https://github.com/weihong-su/miniQMT/issues)
+- 邮箱: weihong-su (via GitHub)
 
 ---
 

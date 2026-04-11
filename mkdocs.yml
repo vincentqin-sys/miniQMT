@@ -1,0 +1,103 @@
+site_name: miniQMT 文档
+site_description: 无人值守量化交易系统 + XtQuantManager HTTP 网关
+site_url: https://weihong-su.github.io/miniQMT/
+repo_url: https://github.com/weihong-su/miniQMT
+repo_name: weihong-su/miniQMT
+docs_dir: docs/site
+site_dir: site
+edit_uri: edit/main/docs/site/
+copyright: "Business Source License 1.1 &mdash; 商业用途需获授权 &bull; 2030-04-13 后转 MIT"
+
+theme:
+  name: material
+  language: zh
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换浅色模式
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.expand
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+
+plugins:
+  - search:
+      lang: en
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      linenums_style: pymdownx-inline
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+nav:
+  - 首页: index.md
+
+  - miniQMT 核心系统:
+    - 概述: miniqmt/index.md
+    - 架构说明: miniqmt/architecture.md
+    - 配置参考: miniqmt/configuration.md
+    - 止盈止损策略: miniqmt/stop-profit-loss.md
+    - 网格交易: miniqmt/grid-trading.md
+    - Web API: miniqmt/web-api.md
+    - 无人值守运行: miniqmt/unattended.md
+    - 数据库表结构: miniqmt/database.md
+    - 测试框架: miniqmt/testing.md
+    - 常见问题: miniqmt/faq.md
+
+  - XtQuantManager:
+    - 概述: xqm/index.md
+    - 架构说明: xqm/architecture.md
+    - 配置指南:
+      - 概述: xqm/configuration/index.md
+      - 单账号（开发/测试）: xqm/configuration/single-account.md
+      - 双账号（多策略）: xqm/configuration/dual-account.md
+      - 局域网共享: xqm/configuration/lan.md
+      - 嵌入 miniQMT: xqm/configuration/embedded.md
+      - 无人值守: xqm/configuration/unattended.md
+      - 全量参数参考: xqm/configuration/reference.md
+    - API 手册:
+      - 概述: xqm/api/index.md
+      - 账号管理: xqm/api/accounts.md
+      - 交易操作: xqm/api/trading.md
+      - 行情接口: xqm/api/market.md
+      - 可观测性: xqm/api/observability.md
+      - curl 速查表: xqm/api/curl-cheatsheet.md
+    - 使用指南:
+      - 多账号实战: xqm/guides/multi-account.md
+      - 安全配置: xqm/guides/security.md
+      - 可观测性实战: xqm/guides/observability.md
+      - 与 miniQMT 集成: xqm/guides/miniqmt-integration.md
+    - 参考:
+      - Python SDK: xqm/sdk.md
+      - 服务管理脚本: xqm/service-management.md
+      - 常见问题: xqm/faq.md
+
+  - 许可证: license.md

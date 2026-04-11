@@ -1,0 +1,122 @@
+# 可观测性
+
+健康检查接口**无需认证**，指标接口需要 Token。
+
+## 全局健康检查
+
+```http
+GET /api/v1/health
+```
+
+适合作为存活探针、监控系统轮询端点。
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "accounts": {
+      "25105132": {
+        "connected": true,
+        "reconnecting": false,
+        "reconnect_attempts": 0,
+        "last_ping_ok_time": 1775550307.58
+      },
+      "25105133": {
+        "connected": true,
+        "reconnecting": false,
+        "reconnect_attempts": 0,
+        "last_ping_ok_time": 1775550307.58
+      }
+    },
+    "total": 2,
+    "healthy": 2
+  }
+}
+```
+
+---
+
+## 单账号健康检查
+
+```http
+GET /api/v1/health/{account_id}
+```
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "account_id": "25105132",
+    "connected": true,
+    "reconnecting": false,
+    "reconnect_attempts": 0,
+    "last_ping_ok_time": 1775550307.58,
+    "connected_at": 1775550000.0,
+    "xtdata_available": true,
+    "xttrader_available": true
+  }
+}
+```
+
+---
+
+## 全局调用指标
+
+```http
+GET /api/v1/metrics
+X-API-Token: <token>
+```
+
+**响应：**
+
+```json
+{
+  "success": true,
+  "data": {
+    "25105132": {
+      "total_calls": 42,
+      "success_calls": 42,
+      "error_calls": 0,
+      "timeout_calls": 0,
+      "error_rate": 0.0,
+      "avg_latency_ms": 4.0,
+      "p50_latency_ms": 3.0,
+      "p95_latency_ms": 16.0,
+      "uptime_seconds": 3600.0,
+      "ops": {
+        "query_positions": {"total": 20, "success": 20, "error": 0, "timeout": 0},
+        "query_asset":     {"total": 10, "success": 10, "error": 0, "timeout": 0},
+        "order_stock":     {"total": 5,  "success": 5,  "error": 0, "timeout": 0},
+        "get_full_tick":   {"total": 7,  "success": 7,  "error": 0, "timeout": 0}
+      }
+    }
+  }
+}
+```
+
+**指标说明：**
+
+| 字段 | 说明 |
+|------|------|
+| `total_calls` | 累计调用次数 |
+| `error_rate` | 最近 100 次的错误率 |
+| `avg_latency_ms` | 最近 1000 次的平均延迟（毫秒） |
+| `p50_latency_ms` | P50 延迟 |
+| `p95_latency_ms` | P95 延迟 |
+| `timeout_calls` | 超时次数 |
+| `ops` | 按操作类型分组统计 |
+
+---
+
+## 单账号调用指标
+
+```http
+GET /api/v1/metrics/{account_id}
+X-API-Token: <token>
+```
+
+返回格式与全局指标中单账号条目相同。

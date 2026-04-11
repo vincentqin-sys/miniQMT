@@ -1,0 +1,81 @@
+Business Source License 1.1
+
+License text copyright (c) 2017 MariaDB Corporation Ab,
+"All Rights Reserved", "Use is subject to license terms".
+
+--------------------------------------------------------------------
+
+LICENSE PARAMETERS
+
+Licensor:            weihong-su
+Licensed Work:       miniQMT (https://github.com/weihong-su/miniQMT)
+                     Including all source code, documentation, configuration
+                     files, test suites, and associated materials in this
+                     repository, excluding third-party dependencies which
+                     remain under their respective licenses.
+Additional Use Grant: You may use the Licensed Work for non-commercial
+                     purposes, including personal study, research, education,
+                     and internal use within a non-commercial organization.
+                     Commercial use -- including but not limited to using the
+                     Licensed Work in a commercial product, offering it as a
+                     paid service, or integrating it into revenue-generating
+                     systems -- requires a separate commercial license from
+                     the Licensor.  Contact: weihong-su via GitHub
+                     (https://github.com/weihong-su) to obtain a commercial
+                     license.
+Change Date:         2030-04-13
+Change License:      MIT
+
+On the Change Date, this license will automatically convert to the
+Change License specified above, at which point the Licensed Work will
+be available under the terms of the MIT license.
+
+--------------------------------------------------------------------
+
+BUSINESS SOURCE LICENSE 1.1 (BUSL-1.1)
+
+This license applies to the Licensed Work, as defined above.
+
+You may not use the Licensed Work except in compliance with this
+license. You may obtain a copy of the license at
+
+    https://mariadb.com/bsl11/
+
+You may use the Licensed Work in accordance with the Additional Use
+Grant, provided that the following conditions are met:
+
+1.  You must give any other recipients of the Licensed Work a copy of
+    this license; and
+2.  You must cause any modified files to carry prominent notices
+    stating that you changed the files; and
+3.  You must retain, in the Source form of any Derivative Works that
+    you distribute, all copyright, patent, trademark, and attribution
+    notices from the Source form of the Licensed Work, excluding those
+    notices that do not pertain to any part of the Derivative Works;
+    and
+4.  You must ensure that the terms of this license are satisfied for
+    each recipient of the Licensed Work.
+
+If you use the Licensed Work in violation of the Additional Use Grant,
+you agree that the Licensor may, at its discretion, terminate your
+license.
+
+--------------------------------------------------------------------
+
+NOTICE
+
+This Licensed Work is provided "AS IS", WITHOUT WARRANTY OF ANY KIND,
+either express or implied, including, but not limited to, the implied
+warranties of merchantability, fitness for a particular purpose, and
+non-infringement.  In no event shall the Licensor be liable for any
+claim, damages, or other liability, whether in an action of contract,
+tort, or otherwise, arising from, out of, or in connection with the
+Licensed Work.
+
+--------------------------------------------------------------------
+
+HISTORICAL NOTE
+
+Versions of miniQMT released prior to v2.0 (April 2026) were published
+under the MIT license.  Those versions remain available under the MIT
+license and are not affected by this change.
