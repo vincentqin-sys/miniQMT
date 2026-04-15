@@ -210,7 +210,18 @@ class PositionManager:
         if config.ENABLE_SIMULATION_MODE:
             return True
         if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
-            return False  # XtQuantManager 有自己的重连机制
+            # XtQuantManager 模式：服务端重连由 HealthMonitor 负责。
+            # 但客户端 qmt_trader（XtQuantClient）若未初始化（模拟→实盘切换），
+            # 仍需在此创建，否则持仓查询等调用全部返回 None。
+            if self.qmt_trader is None:
+                try:
+                    self.qmt_trader = _create_qmt_trader()
+                    self.qmt_connected = True
+                    logger.info("[RECONNECT] XtQuantManager 模式: 已创建 XtQuantClient")
+                except Exception as e:
+                    logger.error(f"[RECONNECT] 创建 XtQuantClient 失败: {e}")
+                    self.qmt_connected = False
+            return self.qmt_connected
 
         if self.qmt_trader is None:
             try:

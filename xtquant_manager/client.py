@@ -590,3 +590,17 @@ class XtDataAdapter:
             end_time=end_time,
         )
 
+    def subscribe_quote(
+        self,
+        stock_code: str,
+        period: str = "tick",
+        start_time: str = "",
+        end_time: str = "",
+        count: int = 0,
+        callback=None,
+    ) -> None:
+        """no-op：XtQuantManager 模式下行情推送由服务端管理，客户端无需主动订阅。
+        保留此方法仅为兼容 xtquant.xtdata.subscribe_quote() 调用方，不报错即可。
+        """
+        pass
+

@@ -98,6 +98,7 @@ def _start_xtquant_manager_server():
             host="127.0.0.1",
             port=8888,
             api_token=getattr(config, "XTQUANT_MANAGER_TOKEN", ""),
+            rate_limit=getattr(config, "XTQUANT_MANAGER_RATE_LIMIT", 600),
         )
         server = XtQuantServer(config=srv_cfg)
         server.start(blocking=False)
@@ -151,6 +152,12 @@ def init_system():
     position_manager = get_position_manager()
     trading_executor = get_trading_executor()
     trading_strategy = get_trading_strategy()
+
+    # Fix: web_server.py 模块加载时（import 阶段）触发 DataManager 单例创建，
+    # 但此时 XtQuantManager HTTP 服务尚未启动，导致 xtdata 初始化失败（self.xt=None）。
+    # 在 HTTP 服务启动后，调用 reinit_xtquant() 补充初始化。
+    if getattr(config, "ENABLE_XTQUANT_MANAGER", False):
+        data_manager.reinit_xtquant()
 
     # 预热股票名称缓存，避免首次交易时触发 baostock 导致 xtdata 断连
     data_manager.warm_stock_name_cache()

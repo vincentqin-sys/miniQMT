@@ -68,6 +68,12 @@ class HealthMonitor:
         # 已注册断连回调的账号集合（lazy-register，首次检查时注册，防止重复）
         self._disconnect_cb_registered: set = set()
 
+        # 连续不健康计数（用于日志降级，避免永久失败账号刷屏）
+        self._consecutive_unhealthy: Dict[str, int] = {}
+        # 连续失败超过此阈值后，Level 0/1 失败日志降级为 DEBUG
+        _LOG_THROTTLE = 3
+        self._LOG_THROTTLE = _LOG_THROTTLE
+
         # 统计
         self._check_count = 0
         self._total_reconnects = 0
@@ -148,7 +154,7 @@ class HealthMonitor:
             try:
                 self._check_account(account_id)
             except Exception as e:
-                logger.error(f"检查账号 {account_id[:4]}*** 时出错: {e}")
+                logger.error(f"检查账号 {self._mask_id(account_id)} 时出错: {e}")
 
     def _check_account(self, account_id: str) -> None:
         """对单个账号执行三级健康检查"""
@@ -166,21 +172,65 @@ class HealthMonitor:
 
         # Level 0: 快速内存检查
         if account.is_healthy():
+            # 账号恢复健康时，重置连续失败计数并记录恢复日志
+            prev_count = self._consecutive_unhealthy.get(account_id, 0)
+            if prev_count > 0:
+                logger.info(
+                    f"[{self._mask_id(account_id)}] 账号恢复健康 "
+                    f"(经过 {prev_count} 次连续检查失败)"
+                )
+                self._consecutive_unhealthy[account_id] = 0
             return
 
-        logger.info(f"[{account_id[:4]}***] Level 0 检查失败，进入 Level 1 ping 探测")
+        # 累计连续失败次数
+        consecutive = self._consecutive_unhealthy.get(account_id, 0) + 1
+        self._consecutive_unhealthy[account_id] = consecutive
+
+        # 连续失败超过阈值后，Level 0/1 日志降级为 DEBUG 以避免刷屏
+        # 每隔 LOG_THROTTLE 次仍输出一次 INFO，告知用户账号持续异常
+        verbose = consecutive <= self._LOG_THROTTLE
+        periodic = (consecutive % 10 == 0)  # 每 10 次仍提示一次
+
+        if verbose or periodic:
+            log_fn = logger.info if verbose else logger.warning
+            log_fn(
+                f"[{self._mask_id(account_id)}] Level 0 检查失败，进入 Level 1 ping 探测"
+                + (f" (连续第 {consecutive} 次)" if periodic else "")
+            )
+        else:
+            logger.debug(
+                f"[{self._mask_id(account_id)}] Level 0 检查失败 (连续第 {consecutive} 次)"
+            )
 
         # Level 1: 真实探测
         if account.ping():
-            logger.info(f"[{account_id[:4]}***] ping 成功，恢复健康")
+            logger.info(f"[{self._mask_id(account_id)}] ping 成功，恢复健康")
+            self._consecutive_unhealthy[account_id] = 0
             return
 
-        logger.warning(f"[{account_id[:4]}***] Level 1 ping 失败，进入 Level 2 重连")
+        if verbose or periodic:
+            logger.warning(
+                f"[{self._mask_id(account_id)}] Level 1 ping 失败，进入 Level 2 重连"
+                + (f" (连续第 {consecutive} 次)" if periodic else "")
+            )
+        else:
+            logger.debug(
+                f"[{self._mask_id(account_id)}] Level 1 ping 失败 (连续第 {consecutive} 次)"
+            )
 
-        # Level 2: 指数退避重连（检查冷却时间）
+        # Level 2: 若账号内部已有重连流程在进行（等待退避或正在建连），跳过本次调度
+        # account.is_reconnecting 为 True 时，新线程调用 reconnect() 会立即返回 False，
+        # 只会产生误导性的"第 N 次"计数和无谓的线程创建开销。
+        if account.is_reconnecting:
+            logger.debug(
+                f"[{self._mask_id(account_id)}] 已有重连线程在运行，跳过本次调度"
+            )
+            return
+
+        # 检查冷却时间（防止断连回调短时间内重复触发）
         if not self._can_reconnect(account_id):
             logger.debug(
-                f"[{account_id[:4]}***] 重连冷却中，跳过本次重连"
+                f"[{self._mask_id(account_id)}] 重连冷却中，跳过本次重连"
             )
             return
 
@@ -192,7 +242,7 @@ class HealthMonitor:
         self._total_reconnects += 1
 
         logger.warning(
-            f"[{account_id[:4]}***] 开始重连 "
+            f"[{self._mask_id(account_id)}] 开始重连 "
             f"(第 {self._reconnect_counts[account_id]} 次)"
         )
 
@@ -200,11 +250,18 @@ class HealthMonitor:
         # 多账号场景下，一个账号的重连等待不影响其他账号的健康检查。
         t = threading.Thread(
             target=account.reconnect,
-            name=f"XtQuantReconnect-{account_id[:4]}",
+            name=f"XtQuantReconnect-{self._mask_id(account_id)}",
             daemon=True,
         )
         t.start()
-        logger.info(f"[{account_id[:4]}***] 已在后台线程发起重连")
+        logger.info(f"[{self._mask_id(account_id)}] 已在后台线程发起重连")
+
+    @staticmethod
+    def _mask_id(account_id: str) -> str:
+        """日志用账号 ID（部分脱敏，与 XtQuantAccount._id() 格式一致：前4位 + *** + 末1位）"""
+        if len(account_id) > 4:
+            return account_id[:4] + "***" + account_id[-1]
+        return account_id
 
     def _can_reconnect(self, account_id: str) -> bool:
         """检查是否超过冷却时间"""
@@ -223,6 +280,6 @@ class HealthMonitor:
         参照 position_manager.py:319-328 的已验证实现。
         """
         logger.warning(
-            f"[{account_id[:4]}***] 收到断连通知，重置重连冷却计时器"
+            f"[{self._mask_id(account_id)}] 收到断连通知，重置重连冷却计时器"
         )
         self._last_reconnect_time[account_id] = 0.0

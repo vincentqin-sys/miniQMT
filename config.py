@@ -199,6 +199,10 @@ ENABLE_XTQUANT_MANAGER = False
 XTQUANT_MANAGER_URL = "http://127.0.0.1:8888"
 # XtQuantManager API Token（空字符串表示不验证）
 XTQUANT_MANAGER_TOKEN = ""
+# XtQuantManager HTTP 服务速率限制（次/分钟，0=不限速）
+# 默认 600：持仓监控每3秒×3只股票=60次/分钟，HealthMonitor+资产查询约30次/分钟，
+# 合计约90次/分钟；设600留足6倍余量，避免 HTTP 429 错误。
+XTQUANT_MANAGER_RATE_LIMIT = 600
 
 # ======================= 策略配置 =======================
 # 仓位管理

@@ -100,6 +100,17 @@ class DataManager:
             logger.error(f"初始化行情接口出错: {str(e)}")
             self.xt = None
 
+    def reinit_xtquant(self):
+        """重新初始化行情接口。
+        用于 ENABLE_XTQUANT_MANAGER=True 时的延迟重连：
+        web_server.py 模块加载时 XtQuantManager HTTP 服务尚未启动，导致首次连接失败。
+        main.py 在 HTTP 服务启动后调用此方法补充初始化。
+        """
+        if self.xt is not None:
+            return  # 已成功初始化，无需重连
+        logger.info("行情接口重新初始化（XtQuantManager 服务已就绪）")
+        self._init_xtquant()
+
     def _subscribe_stocks_to_xtdata(self, stock_list):
         """订阅股票池到 xtdata，保证交易时段 get_full_tick 返回实时推送价格。
         subscribe_quote(count=0) 表示只订阅实时推送，不拉取历史数据。
@@ -389,16 +400,39 @@ class DataManager:
     def download_history_data(self, stock_code, period=None, start_date=None, end_date=None):
         """
         下载股票历史数据 (使用Mootdx)
-        
+
+        ENABLE_XTQUANT_MANAGER=True 时自动路由至 download_history_xtdata()，
+        跳过 Mootdx，避免因网络超时产生残留警告日志。
+
         参数:
         stock_code (str): 股票代码
         period (str): 周期，默认为日线 'day'
-        start_date (str): 开始日期，格式为'2022-01-01'
-        end_date (str): 结束日期，格式为'2022-01-01'
-        
+        start_date (str): 开始日期，格式为'YYYYMMDD' 或 'YYYY-MM-DD'
+        end_date (str): 结束日期，格式为'YYYYMMDD' 或 'YYYY-MM-DD'
+
         返回:
         pandas.DataFrame: 历史数据，若失败则返回None
         """
+        # ── XtQuantManager 模式：通过 HTTP API 下载，跳过 Mootdx ──
+        if getattr(config, 'ENABLE_XTQUANT_MANAGER', False) and self.xt:
+            # 将 Mootdx period 格式映射到 xtdata period 格式
+            _period_map = {
+                'day': '1d', 'week': '1w', 'mon': '1mon',
+                '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h',
+                '1d': '1d',  # 直通
+            }
+            xt_period = _period_map.get(period or 'day', '1d')
+            # 如果未指定起始日期，取近 90 天数据（相当于 Mootdx offset=60 的覆盖范围）
+            if not start_date:
+                from datetime import timedelta
+                start_date = (datetime.now() - timedelta(days=90)).strftime('%Y%m%d')
+            return self.download_history_xtdata(
+                stock_code,
+                period=xt_period,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
         try:
             import Methods  # Import the Methods module
 
@@ -510,7 +544,7 @@ class DataManager:
         下载股票历史数据
 
         参数:
-        stock_code (str): 股票代码
+        stock_code (str): 股票代码（支持裸代码如 "002771" 或带后缀如 "002771.SZ"）
         period (str): 周期，默认为日线 '1d'
         start_date (str): 开始日期，格式为'20220101'
         end_date (str): 结束日期，格式为'20220101'
@@ -520,18 +554,27 @@ class DataManager:
         """
         if not period:
             period = '1d'  # 修复bug: xtquant API要求使用'1d'而非'day'
-            
+
         if not start_date:
             start_date = '20200101'  # 默认从2020年开始
-        
+
         if not end_date:
             # 默认到今天
             end_date = datetime.now().strftime('%Y%m%d')
-        
-        logger.info(f"下载 {stock_code} 的历史数据, 周期: {period}, 从 {start_date} 到 {end_date}")
+
+        # 如果 start_date > end_date（数据已是最新），跳过无效下载
+        if start_date and end_date and start_date > end_date:
+            logger.debug(f"跳过下载 {stock_code}: 已有最新数据 (start={start_date} > end={end_date})")
+            return None
+
+        # xtdata API 要求股票代码带交易所后缀（如 002771.SZ）
+        # stock_pool.json 存储的是裸代码（如 "002771"），需要转换
+        xt_stock_code = self._adjust_stock(stock_code)
+
+        logger.info(f"下载 {xt_stock_code} 的历史数据, 周期: {period}, 从 {start_date} 到 {end_date}")
 
         if not self.xt:
-            logger.debug(f"xtdata未连接，跳过下载 {stock_code} 历史数据")
+            logger.debug(f"xtdata未连接，跳过下载 {xt_stock_code} 历史数据")
             return None
 
         try:
@@ -542,7 +585,7 @@ class DataManager:
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             future = executor.submit(
                 self.xt.download_history_data,
-                stock_code,
+                xt_stock_code,
                 period=period,
                 start_time=start_date,
                 end_time=end_date,
@@ -552,11 +595,11 @@ class DataManager:
             try:
                 future.result(timeout=15.0)  # 15秒超时
             except concurrent.futures.TimeoutError:
-                logger.warning(f"xtquant: 下载 {stock_code} 历史数据超时（15秒）")
+                logger.warning(f"xtquant: 下载 {xt_stock_code} 历史数据超时（15秒）")
                 return None
             except RuntimeError as e:
                 if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
-                    logger.debug(f"[DATA] 解释器正在关闭，跳过下载 {stock_code} 历史数据")
+                    logger.debug(f"[DATA] 解释器正在关闭，跳过下载 {xt_stock_code} 历史数据")
                     return None
                 raise
 
@@ -569,7 +612,7 @@ class DataManager:
             future = executor.submit(
                 self.xt.get_market_data_ex,
                 [],  # 空字段列表表示获取所有可用字段
-                [stock_code],
+                [xt_stock_code],
                 period=period,
                 start_time=start_date,
                 end_time=end_date
@@ -578,23 +621,23 @@ class DataManager:
             try:
                 result = future.result(timeout=10.0)  # 10秒超时
             except concurrent.futures.TimeoutError:
-                logger.warning(f"xtquant: 获取 {stock_code} 历史数据超时（10秒）")
+                logger.warning(f"xtquant: 获取 {xt_stock_code} 历史数据超时（10秒）")
                 return None
             except RuntimeError as e:
                 if "interpreter shutdown" in str(e).lower() or "shutdown" in str(e).lower():
-                    logger.debug(f"[DATA] 解释器正在关闭，跳过获取 {stock_code} 历史数据")
+                    logger.debug(f"[DATA] 解释器正在关闭，跳过获取 {xt_stock_code} 历史数据")
                     return None
                 raise
-            
+
             if not result:
-                logger.warning(f"获取 {stock_code} 的历史数据为空")
+                logger.warning(f"获取 {xt_stock_code} 的历史数据为空")
                 return None
-                
-            if stock_code in result:
-                stock_data = result[stock_code]
+
+            if xt_stock_code in result:
+                stock_data = result[xt_stock_code]
                 df = pd.DataFrame(stock_data)
             else:
-                logger.warning(f"获取的数据中没有 {stock_code}, 可用的键: {list(result.keys())}")
+                logger.warning(f"获取的数据中没有 {xt_stock_code}, 可用的键: {list(result.keys())}")
                 if result:
                     first_key = list(result.keys())[0]
                     stock_data = result[first_key]
@@ -616,19 +659,19 @@ class DataManager:
                     logger.warning(f"转换time列为日期格式失败: {str(e)}")
             
             if not df.empty:
-                logger.info(f"成功下载 {stock_code} 的历史数据, 共 {len(df)} 条记录")
+                logger.info(f"成功下载 {xt_stock_code} 的历史数据, 共 {len(df)} 条记录")
                 return df
             else:
-                logger.warning(f"下载的 {stock_code} 数据为空")
+                logger.warning(f"下载的 {xt_stock_code} 数据为空")
                 return None
-            
+
         except Exception as e:
             # 区分正常关闭错误和真正的错误
             error_str = str(e).lower()
             if "interpreter shutdown" in error_str or "cannot schedule" in error_str:
-                logger.debug(f"[DATA] 系统正在关闭，跳过下载 {stock_code} 历史数据")
+                logger.debug(f"[DATA] 系统正在关闭，跳过下载 {xt_stock_code} 历史数据")
                 return None
-            logger.error(f"下载 {stock_code} 的历史数据时出错: {str(e)}")
+            logger.error(f"下载 {xt_stock_code} 的历史数据时出错: {str(e)}")
             return None
 
     def warm_stock_name_cache(self, stock_codes=None):
@@ -877,6 +920,23 @@ class DataManager:
                     if realtime_data and realtime_data.get('lastPrice', 0) > 0:
                         logger.debug(f"XT获取 {stock_code} 实时数据 {realtime_data.get('lastPrice')}")
                         return realtime_data
+
+                    # XtQuantManager 模式：lastPrice=0 时用 lastClose 替代，跳过 Mootdx
+                    # 非交易时段 xtdata 不返回实时价，但 lastClose（昨收价）可靠，足以支撑持仓估值
+                    if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
+                        last_close = realtime_data.get('lastClose', 0) if realtime_data else 0
+                        if last_close > 0:
+                            realtime_data['lastPrice'] = last_close
+                            logger.debug(
+                                f"XtQuantManager: {stock_code} lastPrice=0，"
+                                f"使用 lastClose={last_close} 作为参考价（非交易时段）"
+                            )
+                            return realtime_data
+                        logger.debug(
+                            f"XtQuantManager: {stock_code} 无有效价格（lastPrice=0, lastClose=0），跳过Mootdx"
+                        )
+                        return None
+
                     if realtime_data:
                         # 有数据但 lastPrice=0：判断是否已订阅
                         code = self._adjust_stock(stock_code)
@@ -891,6 +951,9 @@ class DataManager:
                         # 空 dict：xt 连接超时或股票代码不存在，静默降级
                         logger.debug(f"xtdata: {stock_code} 无数据，降级到Mootdx")
                 except Exception as e:
+                    if getattr(config, 'ENABLE_XTQUANT_MANAGER', False):
+                        logger.debug(f"XtQuantManager: 获取 {stock_code} 实时数据失败，返回None: {str(e)}")
+                        return None
                     logger.debug(f"实时数据管理器获取{stock_code}失败，降级到Mootdx: {str(e)}")
                     
             # 非交易时段：优先尝试 xtdata get_full_tick（盘后返回收盘快照，lastClose 可靠）

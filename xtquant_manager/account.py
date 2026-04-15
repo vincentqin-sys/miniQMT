@@ -701,6 +701,11 @@ class XtQuantAccount:
             return aid[:4] + "***" + aid[-1]
         return aid
 
+    @property
+    def is_reconnecting(self) -> bool:
+        """是否正在执行重连流程（含指数退避等待阶段）"""
+        return self._reconnecting
+
     def _check_trader(self) -> bool:
         """检查 xt_trader 是否可用"""
         if self._xt_trader is None or not self._connected:
