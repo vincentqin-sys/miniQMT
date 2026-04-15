@@ -311,6 +311,7 @@ class GridTradingManager:
         self.level_cooldowns: Dict[tuple, float] = {}
         self.last_buy_times: Dict[int, float] = {}  # {session_id: timestamp} 每次成功买入后记录时间，支持 GRID_BUY_COOLDOWN
         self.last_sell_times: Dict[int, float] = {}  # {session_id: timestamp} 每次成功卖出后记录时间，支持 GRID_SELL_COOLDOWN（A-4修复）
+        self.last_sell_prices: Dict[int, float] = {}  # {session_id: trigger_price} 每次成功卖出时的触发价，支持自适应冷却缩短
         self.lock = threading.RLock()  # 使用可重入锁,支持嵌套调用
 
         # 初始化:从数据库加载活跃会话
@@ -1375,9 +1376,30 @@ class GridTradingManager:
             last_sell = self.last_sell_times.get(session.id, 0)
             elapsed = time.time() - last_sell
             if elapsed < sell_cooldown:
-                logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 卖出冷却中 "
-                               f"(剩余{sell_cooldown - elapsed:.0f}秒), 跳过卖出")
-                return False
+                # 自适应缩短：单边上涨行情中触发价明显高于上次成交价时，冷却期减半
+                price_threshold = getattr(config, 'GRID_SELL_COOLDOWN_PRICE_THRESHOLD', 0.02)
+                last_sell_price = self.last_sell_prices.get(session.id, 0)
+                if (price_threshold > 0 and last_sell_price > 0
+                        and trigger_price > last_sell_price * (1 + price_threshold)):
+                    effective_cooldown = sell_cooldown // 2
+                    if elapsed < effective_cooldown:
+                        logger.warning(
+                            f"[GRID] _execute_grid_sell: {stock_code} 卖出冷却中（自适应缩短至{effective_cooldown}秒）"
+                            f" 剩余{effective_cooldown - elapsed:.0f}秒, "
+                            f"触发价={trigger_price:.2f} 上次={last_sell_price:.2f} "
+                            f"涨幅={(trigger_price/last_sell_price - 1)*100:.1f}%")
+                        return False
+                    else:
+                        logger.info(
+                            f"[GRID] _execute_grid_sell: {stock_code} 自适应冷却缩短生效 "
+                            f"原{sell_cooldown}s→{effective_cooldown}s, "
+                            f"触发价={trigger_price:.2f} 上次={last_sell_price:.2f} "
+                            f"涨幅={(trigger_price/last_sell_price - 1)*100:.1f}%, "
+                            f"已过{elapsed:.0f}s≥{effective_cooldown}s, 允许执行")
+                else:
+                    logger.warning(f"[GRID] _execute_grid_sell: {stock_code} 卖出冷却中 "
+                                   f"(剩余{sell_cooldown - elapsed:.0f}秒), 跳过卖出")
+                    return False
 
         # 1. 获取当前持仓（优先使用调用方预取的快照，避免在持有 self.lock 时再次获取锁）
         position = position_snapshot if position_snapshot is not None else self.position_manager.get_position(stock_code)
@@ -1456,6 +1478,7 @@ class GridTradingManager:
         # 与买入 BUG-C1 修复完全对称：即使后续 DB 操作抛出异常并回滚内存统计，
         # GRID_SELL_COOLDOWN 保护依然有效，阻止在冷却期内再次触发卖出。
         self.last_sell_times[session.id] = time.time()
+        self.last_sell_prices[session.id] = trigger_price  # 记录触发价，供自适应冷却缩短使用
         logger.debug(f"[GRID] _execute_grid_sell: A-4修复 last_sell_times[{session.id}]已记录(DB写入前)")
 
         # 4. 更新会话统计

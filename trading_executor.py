@@ -958,10 +958,16 @@ class TradingExecutor:
                                 retry_count += 1
                                 time.sleep(1)
                                 continue
+                            # order_id=-1 表示QMT拒绝委托（账户限制/行情未就绪等），不重试不保存记录
+                            if order_id == -1:
+                                logger.error(f"[E_ORDER_BUY_REJECT] 买入 {formatted_stock_code} 被QMT拒绝 "
+                                             f"(order_id=-1, seq={returned_id}), 停止重试，不保存交易记录")
+                                order_id = None
+                                break
                         else:
                             order_id = None
 
-                        if order_id:
+                        if order_id and order_id > 0:
                             # 添加：实盘下单成功后也立即保存交易记录
                             trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             trade_saved= self._save_trade_record(
@@ -1209,10 +1215,16 @@ class TradingExecutor:
                                 retry_count += 1
                                 time.sleep(1)
                                 continue
+                            # order_id=-1 表示QMT拒绝委托，不重试不保存记录
+                            if order_id == -1:
+                                logger.error(f"[E_ORDER_SELL_REJECT] 卖出 {formatted_stock_code} 被QMT拒绝 "
+                                             f"(order_id=-1, seq={returned_id}), 停止重试，不保存交易记录")
+                                order_id = None
+                                break
                         else:
                             order_id = None
 
-                        if order_id:
+                        if order_id and order_id > 0:
                             # 参考buy_stock：立即保存交易记录到数据库
                             trade_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             trade_saved = self._save_trade_record(

@@ -17,6 +17,7 @@ import unittest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 import sqlite3
+import time
 from dataclasses import asdict
 
 import config
@@ -584,6 +585,135 @@ class TestGridTradeSell(unittest.TestCase):
                              "GRID_SELL_COOLDOWN 期间内，第二次卖出应被阻止")
 
         print("[OK] 卖出冷却机制验证通过")
+
+    def test_adaptive_cooldown_allows_higher_price(self):
+        """自适应冷却：触发价高于上次成交价2%时，冷却期减半后允许执行
+
+        场景：GRID_SELL_COOLDOWN=300s，卖出后160s，触发价比上次高3%（>2%阈值）
+        → 冷却缩短为150s → 160s已超过150s → 允许卖出
+        """
+        print("\n========== 自适应冷却: 高价允许执行 ==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+
+        session = self._create_test_session(
+            max_investment=10000,
+            current_investment=5000,
+            position_ratio=0.25
+        )
+
+        position = self._mock_position(volume=2000, cost_price=10.0)
+        self.position_manager.get_position.return_value = position
+
+        last_sell_price = 10.5
+        higher_trigger_price = round(last_sell_price * 1.031, 2)  # 涨3.1% > 2%阈值
+
+        # 预设上次卖出时间（160秒前）和价格
+        self.manager.last_sell_times[session.id] = time.time() - 160
+        self.manager.last_sell_prices[session.id] = last_sell_price
+
+        signal = {
+            'stock_code': '000001.SZ',
+            'signal_type': 'SELL',
+            'trigger_price': higher_trigger_price,
+            'grid_level': 10.5,
+            'peak_price': higher_trigger_price + 0.1,
+            'callback_ratio': 0.005
+        }
+
+        with patch.object(config, 'GRID_SELL_COOLDOWN', 300):
+            with patch.object(config, 'GRID_SELL_COOLDOWN_PRICE_THRESHOLD', 0.02):
+                result = self.manager._execute_grid_sell(session, signal)
+
+        self.assertTrue(result,
+                        f"触发价{higher_trigger_price}比上次{last_sell_price}高3.1%>2%阈值，"
+                        f"160s>150s(半冷却)，应允许卖出")
+        print(f"[OK] 自适应冷却缩短生效: {last_sell_price:.2f}→{higher_trigger_price:.2f}, 160s≥150s, 允许执行")
+
+    def test_adaptive_cooldown_blocks_within_half_cooldown(self):
+        """自适应冷却：触发价高于阈值但仍在半冷却期内时继续阻止
+
+        场景：GRID_SELL_COOLDOWN=300s，卖出后100s，触发价比上次高3%
+        → 冷却缩短为150s → 100s<150s → 仍应阻止
+        """
+        print("\n========== 自适应冷却: 半冷却期内仍阻止 ==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+
+        session = self._create_test_session(
+            max_investment=10000,
+            current_investment=5000,
+            position_ratio=0.25
+        )
+
+        position = self._mock_position(volume=2000, cost_price=10.0)
+        self.position_manager.get_position.return_value = position
+
+        last_sell_price = 10.5
+        higher_trigger_price = round(last_sell_price * 1.031, 2)  # 涨3.1% > 2%阈值
+
+        # 预设上次卖出时间（100秒前）- 不足半冷却期150s
+        self.manager.last_sell_times[session.id] = time.time() - 100
+        self.manager.last_sell_prices[session.id] = last_sell_price
+
+        signal = {
+            'stock_code': '000001.SZ',
+            'signal_type': 'SELL',
+            'trigger_price': higher_trigger_price,
+            'grid_level': 10.5,
+            'peak_price': higher_trigger_price + 0.1,
+            'callback_ratio': 0.005
+        }
+
+        with patch.object(config, 'GRID_SELL_COOLDOWN', 300):
+            with patch.object(config, 'GRID_SELL_COOLDOWN_PRICE_THRESHOLD', 0.02):
+                result = self.manager._execute_grid_sell(session, signal)
+
+        self.assertFalse(result,
+                         f"触发价高但100s<150s半冷却期，仍应阻止")
+        print(f"[OK] 半冷却期保护: 100s<150s, 仍阻止")
+
+    def test_adaptive_cooldown_no_effect_when_price_not_higher(self):
+        """自适应冷却：触发价未超过阈值时使用完整冷却期
+
+        场景：GRID_SELL_COOLDOWN=300s，卖出后160s，触发价只比上次高1%（<2%阈值）
+        → 不触发自适应缩短 → 160s<300s → 阻止卖出
+        """
+        print("\n========== 自适应冷却: 价格未超阈值不缩短 ==========")
+
+        config.ENABLE_SIMULATION_MODE = True
+
+        session = self._create_test_session(
+            max_investment=10000,
+            current_investment=5000,
+            position_ratio=0.25
+        )
+
+        position = self._mock_position(volume=2000, cost_price=10.0)
+        self.position_manager.get_position.return_value = position
+
+        last_sell_price = 10.5
+        slightly_higher = round(last_sell_price * 1.01, 2)  # 涨1% < 2%阈值
+
+        self.manager.last_sell_times[session.id] = time.time() - 160
+        self.manager.last_sell_prices[session.id] = last_sell_price
+
+        signal = {
+            'stock_code': '000001.SZ',
+            'signal_type': 'SELL',
+            'trigger_price': slightly_higher,
+            'grid_level': 10.5,
+            'peak_price': slightly_higher + 0.1,
+            'callback_ratio': 0.005
+        }
+
+        with patch.object(config, 'GRID_SELL_COOLDOWN', 300):
+            with patch.object(config, 'GRID_SELL_COOLDOWN_PRICE_THRESHOLD', 0.02):
+                result = self.manager._execute_grid_sell(session, signal)
+
+        self.assertFalse(result,
+                         f"触发价涨幅1%<2%阈值，不触发缩短，160s<300s应阻止")
+        print(f"[OK] 未超阈值不缩短: 涨幅1%<2%, 160s<300s, 阻止执行")
 
 
 def run_tests():

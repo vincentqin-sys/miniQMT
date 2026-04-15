@@ -95,6 +95,15 @@
       ],
       "priority": "high"
     },
+    "order_rejection": {
+      "name": "QMT拒单保护测试",
+      "description": "验证order_id=-1时不保存交易记录，以及自适应卖出冷却缩短逻辑",
+      "modules": [
+        "test.test_order_rejection",
+        "test.test_grid_trade_sell"
+      ],
+      "priority": "critical"
+    },
     "grid_qa_fixes": {
       "name": "网格交易MECE质量审查修复验证测试",
       "description": "验证MECE审查后6个修复：A-1(卖出资金回收语义修正)、A-2(档位冷却键A-2修复有效性)、A-3(死锁预防)、C-3(浮点精度边界)、D-1(SQL注入防护)、D-2(裸except修复)；并覆盖C-1冷却机制、C-2会话重启恢复、C-4 DB失败容错、C-5并发安全",
