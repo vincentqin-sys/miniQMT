@@ -173,7 +173,9 @@ class TestOrderRejection(unittest.TestCase):
         # get_stock_name 需要返回字符串，否则 SQLite 绑定失败
         executor.data_manager.get_stock_name = Mock(return_value='英特科技')
 
-        result = executor.buy_stock(stock_code='301399.SZ', price=24.41, volume=2000)
+        # 强制 is_trade_time() 返回 True，使测试不依赖实际交易时间（CI/非交易时段也能通过）
+        with patch('config.is_trade_time', return_value=True):
+            result = executor.buy_stock(stock_code='301399.SZ', price=24.41, volume=2000)
 
         self.assertEqual(result, 2014314497, "正常 order_id 应原样返回")
         cursor.execute("SELECT COUNT(*) FROM trade_records")

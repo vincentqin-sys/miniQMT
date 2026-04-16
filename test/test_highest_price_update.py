@@ -10,7 +10,7 @@ import sys
 import os
 import time
 import pandas as pd
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 # 添加父目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -55,6 +55,12 @@ class TestHighestPriceUpdate(TestBase):
         # 缩短缓存TTL，便于测试
         self.pm.history_high_cache_ttl = 1
 
+        # 用独立 Mock 替换 data_manager 单例引用，防止其他 PM 线程的调用污染计数
+        mock_dm = MagicMock()
+        mock_dm.get_history_data_from_db.return_value = pd.DataFrame()
+        mock_dm.get_latest_data.return_value = {"high": 12.5, "lastPrice": 12.4}
+        self.pm.data_manager = mock_dm
+
     def tearDown(self):
         try:
             self.pm.stop_sync_thread()
@@ -74,10 +80,11 @@ class TestHighestPriceUpdate(TestBase):
         # 历史高点模拟数据（11.5）
         history_df = pd.DataFrame({"high": [11.0, 11.5]})
 
-        with patch("position_manager.Methods.getStockData", return_value=history_df) as mock_history, \
-             patch.object(self.pm.data_manager, "get_history_data_from_db", return_value=pd.DataFrame()) as mock_db, \
-             patch.object(self.pm.data_manager, "get_latest_data",
-                          return_value={"high": 12.5, "lastPrice": 12.4}) as mock_tick:
+        # mock_tick / mock_db 已在 setUp 中注册到 self.pm.data_manager（独立 Mock，与全局单例隔离）
+        mock_tick = self.pm.data_manager.get_latest_data
+        mock_db = self.pm.data_manager.get_history_data_from_db
+
+        with patch("position_manager.Methods.getStockData", return_value=history_df) as mock_history:
 
             # 第一次调用：应拉取历史数据 + tick
             self.pm.update_all_positions_highest_price()

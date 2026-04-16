@@ -777,7 +777,7 @@
         if (isMonitoring) {
             elements.statusIndicator.textContent = '运行中';
             elements.statusIndicator.className = 'text-lg font-bold text-green-600';
-            elements.toggleMonitorBtn.textContent = '停止执行监控';
+            elements.toggleMonitorBtn.textContent = '停止持仓更新';
             elements.toggleMonitorBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
             elements.toggleMonitorBtn.classList.add('bg-red-600', 'hover:bg-red-700');
             
@@ -788,7 +788,7 @@
         } else {
             elements.statusIndicator.textContent = '未运行';
             elements.statusIndicator.className = 'text-lg font-bold text-red-600';
-            elements.toggleMonitorBtn.textContent = '开始执行监控';
+            elements.toggleMonitorBtn.textContent = '开始持仓更新';
             elements.toggleMonitorBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
             elements.toggleMonitorBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
             
