@@ -115,6 +115,7 @@ mock_cm = MagicMock()
 mock_cm.save_batch_configs.return_value = (3, 0)
 mock_cm.load_config.return_value = None
 mock_cm.save_config.return_value = None
+mock_cm.apply_configs_to_runtime.return_value = 0
 
 # indicator_calculator mock
 mock_indicator = MagicMock()
@@ -774,12 +775,12 @@ class TestDataManagement(WebAPITestBase):
         )
 
     def test_03_import_data(self):
-        """POST /api/data/import 导入数据（存根）"""
+        """POST /api/data/import 导入已保存数据（从DB加载配置并同步持仓）"""
         resp, ms = self._post('/api/data/import', json_data={})
         data = self._parse(resp)
         self._record(
             '/api/data/import', 'POST',
-            '导入数据（存根接口）',
+            '导入已保存数据',
             resp, ms,
             extra_checks=lambda d: self.assertEqual(d.get('status'), 'success'),
         )
