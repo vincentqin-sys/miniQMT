@@ -3126,11 +3126,14 @@ class PositionManager:
 
                 if cursor.rowcount > 0:
                     logger.debug(f"{stock_code} 标记突破状态成功")
+                    # BUG-1修复: 立即失效缓存，防止监控循环在10秒TTL内读到旧的
+                    # profit_breakout_triggered=False，导致"首次突破"日志重复输出
+                    self.positions_cache = None
                     return True
                 else:
                     logger.warning(f"{stock_code} 标记突破状态失败，未找到记录")
                     return False
-                    
+
         except Exception as e:
             logger.error(f"标记 {stock_code} 突破状态失败: {str(e)}")
             return False
@@ -3240,6 +3243,9 @@ class PositionManager:
                 cursor.execute("UPDATE positions SET profit_triggered = ? WHERE stock_code = ?", (True, stock_code))
                 self.memory_conn.commit()
             logger.info(f"已标记 {stock_code} profit_triggered已标记为True")
+            # BUG-1修复: 立即失效缓存，防止监控循环在10秒TTL内读到旧的
+            # profit_triggered=False，导致止盈信号在已标记True后仍被重复生成
+            self.positions_cache = None
             return True
         except Exception as e:
             logger.error(f"标记 {stock_code} profit_triggered时出错: {str(e)}")
