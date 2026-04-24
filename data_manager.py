@@ -63,6 +63,10 @@ class DataManager:
         # 股票名称缓存（在 __init__ 中预先创建，避免运行时懒加载触发 baostock）
         self.stock_names_cache = {}
 
+        # baostock 连续失败冷却机制（防止网络异常时反复阻塞）
+        self._bs_consecutive_failures = 0
+        self._bs_cooldown_until = 0.0  # 冷却截止时间戳
+
         # xtdata断连自动重连控制
         self._xtdata_reconnect_lock = threading.Lock()
         self._xtdata_last_reconnect_time = 0.0
@@ -723,13 +727,53 @@ class DataManager:
 
         logger.info(f"股票名称缓存预热完成: 共 {len(stock_codes)} 只，成功填充 {filled} 只，缓存大小 {len(self.stock_names_cache)}")
 
+    def _baostock_login_with_timeout(self, timeout=None):
+        """带超时的 baostock login，防止网络异常时无限阻塞。
+
+        baostock.bs.login() 内部使用 socket 连接，无超时参数。
+        当服务器不可达时会阻塞到 OS 级 TCP 超时（~21秒），
+        本方法通过线程 + future.result(timeout) 强制截断。
+        """
+        if timeout is None:
+            timeout = getattr(config, 'BAOSTOCK_LOGIN_TIMEOUT', 5)
+
+        import concurrent.futures
+        bs = None
+        try:
+            import baostock as _bs
+            bs = _bs
+        except ImportError:
+            return None, "baostock not installed"
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(bs.login)
+            lg = future.result(timeout=timeout)
+            return lg, None
+        except concurrent.futures.TimeoutError:
+            logger.warning(f"baostock login 超时({timeout}秒)，强制放弃")
+            return None, "timeout"
+        except Exception as e:
+            return None, str(e)
+        finally:
+            executor.shutdown(wait=False)
+
+    def _baostock_logout_safe(self):
+        """安全执行 baostock logout，抑制所有输出和异常。"""
+        try:
+            import baostock as bs
+            with suppress_stdout_stderr():
+                bs.logout()
+        except Exception:
+            pass
+
     def get_stock_name(self, stock_code):
         """
         获取股票名称
-        
+
         参数:
         stock_code (str): 股票代码
-        
+
         返回:
         str: 股票名称，如果未找到则返回股票代码
         """
@@ -761,23 +805,46 @@ class DataManager:
             except Exception as e:
                 logger.debug(f"通过qmt_trader获取股票名称出错: {str(e)}")
 
-            # 尝试使用baostock查询
-            # 注意：baostock的login/logout输出必须全部被抑制，否则logout会干扰xtdata的网络连接
+            # 尝试使用baostock查询（带超时保护和冷却机制）
             try:
-                import baostock as bs
-                with suppress_stdout_stderr():
-                    lg = bs.login()
-                if lg.error_code != '0':
-                    logger.warning(f"baostock登录失败: {lg.error_msg}")
-                    with suppress_stdout_stderr():
-                        bs.logout()
+                import baostock as bs  # noqa: F401 - 检查是否安装
+
+                # 检查冷却期：连续失败后暂时跳过 baostock
+                cooldown = getattr(config, 'BAOSTOCK_RETRY_COOLDOWN', 300)
+                max_failures = getattr(config, 'BAOSTOCK_MAX_CONSECUTIVE_FAILURES', 3)
+
+                if time.time() < self._bs_cooldown_until:
+                    # 冷却期内，降级缓存并直接返回
+                    self.stock_names_cache[stock_code] = stock_code
                     return stock_code
+
+                # 带超时的 login
+                lg, err = self._baostock_login_with_timeout()
+                if lg is None or lg.error_code != '0':
+                    err_msg = err if lg is None else lg.error_msg
+                    logger.warning(f"baostock登录失败: {err_msg}")
+                    self._bs_consecutive_failures += 1
+
+                    if self._bs_consecutive_failures >= max_failures:
+                        self._bs_cooldown_until = time.time() + cooldown
+                        logger.warning(
+                            f"baostock 连续失败 {self._bs_consecutive_failures} 次，"
+                            f"进入冷却期 {cooldown} 秒"
+                        )
+
+                    # 降级缓存：避免同一个 stock_code 重复触发 baostock
+                    self.stock_names_cache[stock_code] = stock_code
+                    self._baostock_logout_safe()
+                    return stock_code
+
+                # login 成功，重置失败计数
+                self._bs_consecutive_failures = 0
+                self._bs_cooldown_until = 0.0
 
                 # 调整股票代码格式
                 if '.' in stock_code:
-                    formatted_code = stock_code  # 假设已经是bs格式
+                    formatted_code = stock_code
                 else:
-                    # 转换为baostock格式
                     if stock_code.startswith(('600', '601', '603', '688', '510')):
                         formatted_code = f"sh.{stock_code}"
                     else:
@@ -787,36 +854,36 @@ class DataManager:
                 rs = bs.query_stock_basic(code=formatted_code)
                 if rs.error_code != '0':
                     logger.warning(f"查询股票基本信息失败: {rs.error_msg}")
-                    with suppress_stdout_stderr():
-                        bs.logout()
+                    self.stock_names_cache[stock_code] = stock_code
+                    self._baostock_logout_safe()
                     return stock_code
 
                 # 获取结果
                 data_list = []
                 while (rs.error_code == '0') & rs.next():
                     data_list.append(rs.get_row_data())
-                with suppress_stdout_stderr():
-                    bs.logout()
+                self._baostock_logout_safe()
 
                 if data_list:
-                    # 股票名称通常是结果的第二列
                     stock_name = data_list[0][1] if len(data_list[0]) > 1 else stock_code
-
-                    # 保存到缓存
                     self.stock_names_cache[stock_code] = stock_name
                     return stock_name
 
+                self.stock_names_cache[stock_code] = stock_code
                 return stock_code
 
             except ImportError:
                 logger.warning("未安装baostock，无法获取股票名称")
+                self.stock_names_cache[stock_code] = stock_code
                 return stock_code
             except Exception as e:
                 logger.error(f"获取股票 {stock_code} 名称时出错: {str(e)}")
+                self.stock_names_cache[stock_code] = stock_code
                 return stock_code
-                
+
         except Exception as e:
             logger.error(f"获取股票 {stock_code} 名称时出错: {str(e)}")
+            self.stock_names_cache[stock_code] = stock_code
             return stock_code
     
     def save_history_data(self, stock_code, data_df):

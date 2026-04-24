@@ -42,6 +42,11 @@ ENABLE_DYNAMIC_STOP_PROFIT = True   # 止盈止损功能开关（信号检测）
 # - ENABLE_GRID_TRADING：控制网格交易的检测和执行（独立开关，互不影响）
 # - ENABLE_DYNAMIC_STOP_PROFIT：控制止盈止损信号的检测
 
+# baostock 降级配置（防止网络阻塞）
+BAOSTOCK_LOGIN_TIMEOUT = 5          # baostock login 超时秒数（防止无超时阻塞）
+BAOSTOCK_RETRY_COOLDOWN = 300       # 连续失败后冷却时间（秒，默认5分钟）
+BAOSTOCK_MAX_CONSECUTIVE_FAILURES = 3  # 连续失败N次后进入冷却期
+
 # 其他功能开关
 ENABLE_DATA_SYNC = True             # 是否启用数据同步
 ENABLE_POSITION_MONITOR = True      # 是否启用持仓监控
